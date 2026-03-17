@@ -1,0 +1,24 @@
+server:
+  port: 9090
+  base-path: /api/ragent
+
+db:
+  dsn: "root:root@tcp(127.0.0.1:3306)/ragent?charset=utf8mb4&parseTime=True&loc=Local"
+  max-open-conns: 10
+  max-idle-conns: 5
+  conn-max-lifetime: 1800
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: "123456"
+  db: 0
+
+milvus:
+  uri: "http://localhost:19530"
+
+rustfs:
+  endpoint: "localhost:9000"
+  access-key: "rustfsadmin"
+  secret-key: "rustfsadmin"
+  bucket: "ragent"
+  use-ssl: false

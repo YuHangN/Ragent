@@ -3,14 +3,14 @@ server:
   base-path: /api/ragent
 
 db:
-  dsn: "root:root@tcp(127.0.0.1:3306)/ragent?charset=utf8mb4&parseTime=True&loc=Local"
+  dsn: ""  # 通过环境变量 RAGENT_DB_DSN 注入
   max-open-conns: 10
   max-idle-conns: 5
   conn-max-lifetime: 1800
 
 redis:
   addr: "127.0.0.1:6379"
-  password: "123456"
+  password: ""  # 通过环境变量 RAGENT_REDIS_PASSWORD 注入
   db: 0
 
 milvus:
@@ -18,7 +18,7 @@ milvus:
 
 rustfs:
   endpoint: "localhost:9000"
-  access-key: "rustfsadmin"
-  secret-key: "rustfsadmin"
+  access-key: ""  # 通过环境变量 RAGENT_RUSTFS_ACCESS_KEY 注入
+  secret-key: ""  # 通过环境变量 RAGENT_RUSTFS_SECRET_KEY 注入
   bucket: "ragent"
   use-ssl: false

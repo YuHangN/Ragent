@@ -4,11 +4,15 @@ import (
 	"log"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
 // Load 负责读取 application.yaml，并把内容解析到 Config 结构体里并返回.
 func Load() *Config {
+	// 加载 .env 文件（文件不存在时静默跳过），敏感信息通过环境变量注入。
+	_ = godotenv.Load()
+
 	// 创建一个独立的 viper 实例。
 	v := viper.New()
 

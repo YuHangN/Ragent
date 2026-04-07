@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/YuHangN/ragent-go/internal/server/middleware"
+	"github.com/YuHangN/ragent-go/pkg/middleware"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/gin-gonic/gin"
 )

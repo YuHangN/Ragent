@@ -68,7 +68,7 @@ type ProviderConfig struct {
 }
 
 // SelectionConfig 是模型选择时的公共策略。
-// 后面如果你做失败切换、熔断恢复，会用到这里。
+// 后面做失败切换、熔断恢复，会用到这里。
 type SelectionConfig struct {
 	FailureThreshold int   `mapstructure:"failure-threshold"`
 	OpenDurationMs   int64 `mapstructure:"open-duration-ms"`

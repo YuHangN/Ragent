@@ -13,7 +13,6 @@ import (
 )
 
 // NewS3Client 负责初始化 S3 客户端。
-// TODO: 需要理解代码，特别是 AWS 配置部分
 func NewS3Client(cfg *config.RustFSConfig) *s3.Client {
 	// 根据配置决定使用 http 还是 https。
 	scheme := "http"

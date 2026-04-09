@@ -22,3 +22,8 @@ rustfs:
   secret-key: ""  # 通过环境变量 RAGENT_RUSTFS_SECRET_KEY 注入
   bucket: "ragent"
   use-ssl: false
+
+app:
+  demo-mode: false
+  jwt-secret: "ragent-secret-change-in-production"
+  jwt-expire-hours: 72

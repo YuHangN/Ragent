@@ -11,7 +11,7 @@ import (
 
 func TestHealthCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := NewRouter("/api/ragent")
+	r := NewRouter("/api/ragent", Deps{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ragent/health", nil)
 	w := httptest.NewRecorder()

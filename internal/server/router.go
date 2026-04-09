@@ -3,12 +3,18 @@ package server
 import (
 	"net/http"
 
+	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/middleware"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(basePath string) *gin.Engine {
+type Deps struct {
+	UserHandler *user.Handler
+	JWTSecret   string
+}
+
+func NewRouter(basePath string, deps Deps) *gin.Engine {
 	r := gin.New() // 不使用 gin.Default()，手动注册中间件，保持可控
 
 	r.Use(middleware.CORS())
@@ -16,7 +22,9 @@ func NewRouter(basePath string) *gin.Engine {
 	r.Use(middleware.Logger())
 
 	api := r.Group(basePath)
+
 	registerHealthCheck(api)
+	user.RegisterRoutes(api, deps.UserHandler, deps.JWTSecret)
 
 	return r
 }

@@ -5,6 +5,7 @@ import (
 	"github.com/YuHangN/ragent-go/infra/cache"
 	"github.com/YuHangN/ragent-go/infra/db"
 	"github.com/YuHangN/ragent-go/internal/server"
+	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -18,12 +19,20 @@ func main() {
 	zap.ReplaceGlobals(logger.L)
 
 	// 3. 初始化基础设施（仅连接，不做业务）
-	db.NewMySQL(&cfg.DB)
+	gormDB := db.NewMySQL(&cfg.DB)
 	cache.NewRedis(&cfg.Redis)
 
-	// 4. 创建路由
-	router := server.NewRouter(cfg.Server.BasePath)
+	// 4. 初始化用户模块依赖
+	userRepo := user.NewUserRepo(gormDB)
+	userSvc := user.NewUserService(userRepo, cfg.App.JWTSecret, cfg.App.JWTExpireHours)
+	userHandler := user.NewHandler(userSvc)
 
-	// 5. 启动服务器（阻塞，直到收到终止信号）
+	// 5. 创建路由
+	router := server.NewRouter(cfg.Server.BasePath, server.Deps{
+		UserHandler: userHandler,
+		JWTSecret:   cfg.App.JWTSecret,
+	})
+
+	// 6. 启动服务器（阻塞，直到收到终止信号）
 	server.New(cfg.Server.Port, router).Start()
 }

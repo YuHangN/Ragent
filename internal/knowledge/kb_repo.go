@@ -18,8 +18,10 @@ type gormKBRepo struct{ db *gorm.DB }
 
 func NewKBRepo(db *gorm.DB) KBRepo { return &gormKBRepo{db: db} }
 
+// Create INSERT INTO knowledge_bases (...) VALUES (...)
 func (r *gormKBRepo) Create(kb *KnowledgeBase) error { return r.db.Create(kb).Error }
 
+// FindByID SELECT * FROM knowledge_bases WHERE id = ? LIMIT 1
 func (r *gormKBRepo) FindByID(id int64) (*KnowledgeBase, error) {
 	var kb KnowledgeBase
 	if err := r.db.First(&kb, id).Error; err != nil {
@@ -28,10 +30,13 @@ func (r *gormKBRepo) FindByID(id int64) (*KnowledgeBase, error) {
 	return &kb, nil
 }
 
+// Update knowledge_bases SET ... WHERE id = ?
 func (r *gormKBRepo) Update(kb *KnowledgeBase) error { return r.db.Save(kb).Error }
 
+// Delete FROM knowledge_bases WHERE id = ?
 func (r *gormKBRepo) Delete(id int64) error { return r.db.Delete(&KnowledgeBase{}, id).Error }
 
+// ExistsByName SELECT COUNT(*) FROM knowledge_bases WHERE name = ? [AND id != ?]
 func (r *gormKBRepo) ExistsByName(name string, excludeID int64) (bool, error) {
 	var count int64
 	q := r.db.Model(&KnowledgeBase{}).Where("name = ?", name)
@@ -41,6 +46,7 @@ func (r *gormKBRepo) ExistsByName(name string, excludeID int64) (bool, error) {
 	return count > 0, q.Count(&count).Error
 }
 
+// Page SELECT * FROM knowledge_bases [WHERE name LIKE ?] ORDER BY update_time DESC LIMIT ? OFFSET ?
 func (r *gormKBRepo) Page(name string, page, size int) ([]KnowledgeBase, int64, error) {
 	var items []KnowledgeBase
 	var total int64
@@ -55,6 +61,7 @@ func (r *gormKBRepo) Page(name string, page, size int) ([]KnowledgeBase, int64, 
 	return items, total, err
 }
 
+// DocCountByKbIDs SELECT kb_id, COUNT(1) AS count FROM knowledge_documents WHERE kb_id IN (?) GROUP BY kb_id
 func (r *gormKBRepo) DocCountByKbIDs(kbIDs []int64) (map[int64]int64, error) {
 	if len(kbIDs) == 0 {
 		return map[int64]int64{}, nil

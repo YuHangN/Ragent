@@ -20,8 +20,10 @@ type gormDocRepo struct{ db *gorm.DB }
 
 func NewDocRepo(db *gorm.DB) DocRepo { return &gormDocRepo{db: db} }
 
+// Create INSERT INTO knowledge_documents (...) VALUES (...)
 func (r *gormDocRepo) Create(doc *KnowledgeDocument) error { return r.db.Create(doc).Error }
 
+// FindByID SELECT * FROM knowledge_documents WHERE id = ? LIMIT 1
 func (r *gormDocRepo) FindByID(id int64) (*KnowledgeDocument, error) {
 	var doc KnowledgeDocument
 	if err := r.db.First(&doc, id).Error; err != nil {
@@ -30,18 +32,22 @@ func (r *gormDocRepo) FindByID(id int64) (*KnowledgeDocument, error) {
 	return &doc, nil
 }
 
+// Update knowledge_documents SET ... WHERE id = ?
 func (r *gormDocRepo) Update(doc *KnowledgeDocument) error { return r.db.Save(doc).Error }
 
+// Delete DELETE FROM knowledge_documents WHERE id = ?
 func (r *gormDocRepo) Delete(id int64) error {
 	return r.db.Delete(&KnowledgeDocument{}, id).Error
 }
 
+// CountByKbID SELECT COUNT(*) FROM knowledge_documents WHERE kb_id = ?
 func (r *gormDocRepo) CountByKbID(kbID int64) (int64, error) {
 	var count int64
 	err := r.db.Model(&KnowledgeDocument{}).Where("kb_id = ?", kbID).Count(&count).Error
 	return count, err
 }
 
+// Page SELECT * FROM knowledge_documents WHERE kb_id = ? [AND status = ?] [AND doc_name LIKE ?] ORDER BY update_time DESC LIMIT ? OFFSET ?
 func (r *gormDocRepo) Page(kbID int64, status, keyword string, page, size int) ([]KnowledgeDocument, int64, error) {
 	var items []KnowledgeDocument
 	var total int64
@@ -59,6 +65,7 @@ func (r *gormDocRepo) Page(kbID int64, status, keyword string, page, size int) (
 	return items, total, err
 }
 
+// Search SELECT * FROM knowledge_documents [WHERE doc_name LIKE ?] ORDER BY update_time DESC LIMIT ?
 func (r *gormDocRepo) Search(keyword string, limit int) ([]KnowledgeDocument, error) {
 	var items []KnowledgeDocument
 	q := r.db.Model(&KnowledgeDocument{})
@@ -69,10 +76,12 @@ func (r *gormDocRepo) Search(keyword string, limit int) ([]KnowledgeDocument, er
 	return items, err
 }
 
+// UpdateStatus UPDATE knowledge_documents SET status = ? WHERE id = ?
 func (r *gormDocRepo) UpdateStatus(id int64, status string) error {
 	return r.db.Model(&KnowledgeDocument{}).Where("id = ?", id).Update("status", status).Error
 }
 
+// UpdateChunkCount UPDATE knowledge_documents SET chunk_count = chunk_count + ? WHERE id = ?
 func (r *gormDocRepo) UpdateChunkCount(id int64, delta int) error {
 	return r.db.Model(&KnowledgeDocument{}).Where("id = ?", id).
 		UpdateColumn("chunk_count", gorm.Expr("chunk_count + ?", delta)).Error

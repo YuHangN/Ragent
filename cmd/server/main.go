@@ -4,6 +4,9 @@ import (
 	"github.com/YuHangN/ragent-go/config"
 	"github.com/YuHangN/ragent-go/infra/cache"
 	"github.com/YuHangN/ragent-go/infra/db"
+	"github.com/YuHangN/ragent-go/infra/storage"
+	"github.com/YuHangN/ragent-go/infra/vector"
+	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/logger"
@@ -27,10 +30,23 @@ func main() {
 	userSvc := user.NewUserService(userRepo, cfg.App.JWTSecret, cfg.App.JWTExpireHours)
 	userHandler := user.NewHandler(userSvc)
 
+	// 5. 初始化知识库模块依赖
+	s3Client := storage.NewS3Client(&cfg.RustFS)
+	milvusClient := vector.NewMilvus(&cfg.Milvus)
+
+	kbRepo := knowledge.NewKBRepo(gormDB)
+	docRepo := knowledge.NewDocRepo(gormDB)
+	chunkRepo := knowledge.NewChunkRepo(gormDB)
+	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
+	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client)
+	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
+	knowledgeHandler := knowledge.NewHandler(kbSvc, docSvc, chunkSvc)
+
 	// 5. 创建路由
 	router := server.NewRouter(cfg.Server.BasePath, server.Deps{
-		UserHandler: userHandler,
-		JWTSecret:   cfg.App.JWTSecret,
+		UserHandler:      userHandler,
+		KnowledgeHandler: knowledgeHandler,
+		JWTSecret:        cfg.App.JWTSecret,
 	})
 
 	// 6. 启动服务器（阻塞，直到收到终止信号）

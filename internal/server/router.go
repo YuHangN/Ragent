@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/middleware"
 	"github.com/YuHangN/ragent-go/pkg/response"
@@ -10,8 +11,9 @@ import (
 )
 
 type Deps struct {
-	UserHandler *user.Handler
-	JWTSecret   string
+	UserHandler      *user.Handler
+	KnowledgeHandler *knowledge.Handler
+	JWTSecret        string
 }
 
 func NewRouter(basePath string, deps Deps) *gin.Engine {
@@ -22,9 +24,9 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	r.Use(middleware.Logger())
 
 	api := r.Group(basePath)
-
 	registerHealthCheck(api)
 	user.RegisterRoutes(api, deps.UserHandler, deps.JWTSecret)
+	knowledge.RegisterRoutes(api, deps.KnowledgeHandler, middleware.Auth(deps.JWTSecret))
 
 	return r
 }

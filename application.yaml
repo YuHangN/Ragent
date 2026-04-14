@@ -27,3 +27,50 @@ app:
   demo-mode: false
   jwt-secret: "ragent-secret-change-in-production"
   jwt-expire-hours: 72
+
+ai:
+  providers:
+    # OpenAI — chat 服务
+    openai:
+      url: "https://api.openai.com"
+      api-key: ""    # 通过环境变量 RAGENT_AI_PROVIDERS_OPENAI_API_KEY 覆盖
+    # SiliconFlow — 托管 BGE-M3 等开源模型，全球可访问，价格极低
+    siliconflow:
+      url: "https://api.siliconflow.cn"
+      api-key: ""    # 通过环境变量 RAGENT_AI_PROVIDERS_SILICONFLOW_API_KEY 覆盖
+    # Cohere — 业界最广泛使用的专用 rerank 服务
+    cohere:
+      url: "https://api.cohere.com"
+      api-key: ""    # 通过环境变量 RAGENT_AI_PROVIDERS_COHERE_API_KEY 覆盖
+    # Ollama — 本地运行开源模型（无需 API Key，开发阶段推荐）
+    ollama:
+      url: "http://localhost:11434"
+
+  chat:
+    default-model: "gpt-4o-mini"
+    candidates:
+      - id: "gpt-4o-mini"
+        provider: "openai"
+        model: "gpt-4o-mini"
+        priority: 1
+
+  embedding:
+    # BGE-M3：专为检索设计，多语言 MTEB 持续 top3，1024 维匹配 Milvus schema，无需改 Phase 3 代码
+    # 生产用 SiliconFlow（约 $0.05/1M tokens），本地开发用 Ollama（ollama pull bge-m3）
+    default-model: "bge-m3"
+    candidates:
+      - id: "bge-m3"
+        provider: "siliconflow"
+        model: "BAAI/bge-m3"
+        dimension: 1024
+        priority: 1
+
+  rerank:
+    # Cohere rerank-multilingual-v3.0 — 支持 100+ 语言，使用最广泛的专用 reranker
+    default-model: "rerank-multilingual-v3"
+    candidates:
+      - id: "rerank-multilingual-v3"
+        provider: "cohere"
+        model: "rerank-multilingual-v3.0"
+        priority: 1
+

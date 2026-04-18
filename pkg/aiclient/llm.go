@@ -69,6 +69,7 @@ type chatCompletionResponse struct {
 // ── sync chat ────────────────────────────────────────────────────
 
 func (s *httpLLMService) Chat(ctx context.Context, req ChatRequest) (string, error) {
+	// 构造请求体
 	body, _ := json.Marshal(s.buildReqBody(req, false))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL, bytes.NewReader(body))
 	if err != nil {
@@ -77,6 +78,7 @@ func (s *httpLLMService) Chat(ctx context.Context, req ChatRequest) (string, err
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
 
+	// 发送请求
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("llm HTTP: %w", err)
@@ -87,6 +89,7 @@ func (s *httpLLMService) Chat(ctx context.Context, req ChatRequest) (string, err
 		return "", fmt.Errorf("llm HTTP %d: %s", resp.StatusCode, data)
 	}
 
+	// 解析响应
 	var result chatCompletionResponse
 	if err := json.Unmarshal(data, &result); err != nil {
 		return "", fmt.Errorf("llm parse: %w", err)

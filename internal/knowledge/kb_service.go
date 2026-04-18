@@ -186,12 +186,16 @@ func (s *KBService) ensureMilvusCollection(collectionName string) error {
 	schema := &entity.Schema{
 		CollectionName: collectionName,
 		Fields: []*entity.Field{
-			{Name: "id", DataType: entity.FieldTypeInt64, PrimaryKey: true, AutoID: true},
+			// id 为 snowflake string，与 MySQL t_knowledge_chunk.id 一致
+			{Name: "id", DataType: entity.FieldTypeVarChar, PrimaryKey: true, AutoID: false,
+				TypeParams: map[string]string{"max_length": "64"}},
 			{Name: "doc_id", DataType: entity.FieldTypeInt64},
-			{Name: "chunk_id", DataType: entity.FieldTypeInt64},
-			// 向量维度在 Phase 5 接入真实 embedding 模型后可从 KB embeddingModel 动态读取
+			{Name: "chunk_index", DataType: entity.FieldTypeInt32},
+			{Name: "content", DataType: entity.FieldTypeVarChar,
+				TypeParams: map[string]string{"max_length": "65535"}},
+			// bge-m3 输出 1024 维
 			{Name: "embedding", DataType: entity.FieldTypeFloatVector,
-				TypeParams: map[string]string{"dim": "1536"}},
+				TypeParams: map[string]string{"dim": "1024"}},
 		},
 	}
 	if err := s.milvus.CreateCollection(ctx, schema, 1); err != nil {

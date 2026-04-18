@@ -15,7 +15,7 @@ import (
 )
 
 type ChunkProcessor interface {
-	Process(docID int64) error
+	ProcessDocument(ctx context.Context, docID int64) error
 }
 
 // DocService 处理文档上传、分页、删除、分块触发。
@@ -122,7 +122,7 @@ func (s *DocService) StartChunk(docIDStr string) error {
 
 	if s.chunkProcessor != nil {
 		go func() {
-			if err := s.chunkProcessor.Process(docID); err != nil {
+			if err := s.chunkProcessor.ProcessDocument(context.Background(), docID); err != nil {
 				zap.L().Error("chunk processing failed",
 					zap.Int64("docID", docID), zap.Error(err))
 				_ = s.docRepo.UpdateStatus(docID, DocStatusFailed)

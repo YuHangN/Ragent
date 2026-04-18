@@ -3,11 +3,35 @@ package knowledge
 import (
 	"time"
 
+	"github.com/YuHangN/ragent-go/pkg/idgen"
 	"gorm.io/gorm"
 )
 
+// BeforeCreate 由 GORM 在 INSERT 前自动调用，赋 Snowflake ID。
+// 对应 Java：@TableId(type = IdType.ASSIGN_ID)
+func (k *KnowledgeBase) BeforeCreate(_ *gorm.DB) error {
+	if k.ID == 0 {
+		k.ID = idgen.NewID()
+	}
+	return nil
+}
+
+func (d *KnowledgeDocument) BeforeCreate(_ *gorm.DB) error {
+	if d.ID == 0 {
+		d.ID = idgen.NewID()
+	}
+	return nil
+}
+
+func (c *KnowledgeChunk) BeforeCreate(_ *gorm.DB) error {
+	if c.ID == 0 {
+		c.ID = idgen.NewID()
+	}
+	return nil
+}
+
 type KnowledgeBase struct {
-	ID             int64          `gorm:"primaryKey;autoIncrement"`
+	ID             int64          `gorm:"primaryKey"`
 	Name           string         `gorm:"column:name;not null"`
 	EmbeddingModel string         `gorm:"column:embedding_model"`
 	CollectionName string         `gorm:"column:collection_name"`
@@ -22,7 +46,7 @@ func (KnowledgeBase) TableName() string { return "t_knowledge_base" }
 
 // KnowledgeDocument 对应 t_knowledge_document
 type KnowledgeDocument struct {
-	ID              int64          `gorm:"primaryKey;autoIncrement"`
+	ID              int64          `gorm:"primaryKey"`
 	KbID            int64          `gorm:"column:kb_id;not null"`
 	DocName         string         `gorm:"column:doc_name"`
 	SourceType      string         `gorm:"column:source_type"` // file / url
@@ -50,7 +74,7 @@ func (KnowledgeDocument) TableName() string { return "t_knowledge_document" }
 
 // KnowledgeChunk 对应 t_knowledge_chunk
 type KnowledgeChunk struct {
-	ID          int64          `gorm:"primaryKey;autoIncrement"`
+	ID          int64          `gorm:"primaryKey"`
 	KbID        int64          `gorm:"column:kb_id;not null"`
 	DocID       int64          `gorm:"column:doc_id;not null"`
 	ChunkIndex  int            `gorm:"column:chunk_index;default:0"`

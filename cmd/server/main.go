@@ -6,6 +6,7 @@ import (
 	"github.com/YuHangN/ragent-go/infra/db"
 	"github.com/YuHangN/ragent-go/infra/storage"
 	"github.com/YuHangN/ragent-go/infra/vector"
+	"github.com/YuHangN/ragent-go/internal/ingestion"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
@@ -58,6 +59,22 @@ func main() {
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
+
+	// 7. Ingestion pipeline 依赖
+	ingestionSvc := ingestion.NewIngestionService(
+		s3Client,
+		milvusClient,
+		embeddingService,
+		docRepo,
+		chunkRepo,
+		ingestion.IngestionServiceConfig{
+			ChunkerStrategy: ingestion.FixedSizeChunker{},
+			ChunkSize:       512,
+			Overlap:         128,
+		},
+	)
+	docSvc.SetChunkProcessor(ingestionSvc)
+
 	knowledgeHandler := knowledge.NewHandler(kbSvc, docSvc, chunkSvc)
 
 	// 7. 创建路由

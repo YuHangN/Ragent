@@ -156,7 +156,7 @@ func (h *Handler) DeleteDoc(c *gin.Context) {
 }
 
 func (h *Handler) GetDoc(c *gin.Context) {
-	vo, err := h.doc.Get(c.Param("docId"))
+	vo, err := h.doc.Get(c.Param("doc-id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
 		return
@@ -180,7 +180,7 @@ func (h *Handler) PageDocs(c *gin.Context) {
 
 func (h *Handler) EnableDoc(c *gin.Context) {
 	enabled := c.Query("value") == "true"
-	if err := h.doc.Enable(c.Param("docId"), enabled); err != nil {
+	if err := h.doc.Enable(c.Param("doc-id"), enabled); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
 		return
 	}

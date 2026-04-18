@@ -3,12 +3,22 @@ package user
 import (
 	"time"
 
+	"github.com/YuHangN/ragent-go/pkg/idgen"
 	"gorm.io/gorm"
 )
 
+// BeforeCreate 由 GORM 在 INSERT 前自动调用，赋 Snowflake ID。
+// 对应 Java：@TableId(type = IdType.ASSIGN_ID)
+func (u *User) BeforeCreate(_ *gorm.DB) error {
+	if u.ID == 0 {
+		u.ID = idgen.NewID()
+	}
+	return nil
+}
+
 // User 对应数据库 t_user 表。
 type User struct {
-	ID        int64          `gorm:"primaryKey;autoIncrement" json:"id"`
+	ID        int64          `gorm:"primaryKey" json:"id"`
 	Username  string         `gorm:"column:username;not null;uniqueIndex" json:"username"`
 	Password  string         `gorm:"column:password;not null" json:"-"` // json:"-" 避免密码泄漏
 	Avatar    string         `gorm:"column:avatar" json:"avatar"`

@@ -20,10 +20,10 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 
 	// 文档管理（独立路径）
 	doc := rg.Group("/knowledge-base/docs", auth)
-	doc.GET("/:docId", h.GetDoc)
+	doc.GET("/:doc-id", h.GetDoc)
 	doc.DELETE("/:doc-id", h.DeleteDoc)
 	doc.POST("/:doc-id/chunk", h.StartChunk)
-	doc.PATCH("/:docId/enable", h.EnableDoc)
+	doc.PATCH("/:doc-id/enable", h.EnableDoc)
 
 	// Chunk 管理
 	chunk := rg.Group("/knowledge-base/docs/:doc-id/chunks", auth)

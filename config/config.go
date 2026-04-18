@@ -199,4 +199,5 @@ type AppConfig struct {
 	DemoMode       bool   `mapstructure:"demo-mode"`
 	JWTSecret      string `mapstructure:"jwt-secret"`
 	JWTExpireHours int    `mapstructure:"jwt-expire-hours"`
+	NodeID         int64  `mapstructure:"node-id"` // Snowflake 节点 ID，范围 0-1023，默认 0
 }

@@ -46,8 +46,10 @@ func main() {
 
 	// 5. 初始化用户模块依赖
 	userRepo := user.NewUserRepo(gormDB)
-	userSvc := user.NewUserService(userRepo, cfg.App.JWTSecret, cfg.App.JWTExpireHours)
-	userHandler := user.NewHandler(userSvc)
+	userSvc := user.NewUserService(userRepo)
+	authSvc := user.NewAuthService(userRepo, cfg.App.JWTSecret, cfg.App.JWTExpireHours)
+	authHandler := user.NewAuthHandler(authSvc)
+	userHandler := user.NewUserHandler(userSvc)
 
 	// 6. 初始化知识库模块依赖
 	s3Client := storage.NewS3Client(&cfg.RustFS)
@@ -79,9 +81,11 @@ func main() {
 
 	// 7. 创建路由
 	router := server.NewRouter(cfg.Server.BasePath, server.Deps{
+		AuthHandler:      authHandler,
 		UserHandler:      userHandler,
 		KnowledgeHandler: knowledgeHandler,
 		JWTSecret:        cfg.App.JWTSecret,
+		DemoMode:         cfg.App.DemoMode,
 	})
 
 	// 8. 启动服务器（阻塞，直到收到终止信号）

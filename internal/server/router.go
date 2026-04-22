@@ -12,9 +12,11 @@ import (
 )
 
 type Deps struct {
-	UserHandler      *user.Handler
+	AuthHandler      *user.AuthHandler
+	UserHandler      *user.UserHandler
 	KnowledgeHandler *knowledge.Handler
 	JWTSecret        string
+	DemoMode         bool
 }
 
 func NewRouter(basePath string, deps Deps) *gin.Engine {
@@ -24,6 +26,7 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
 	r.Use(middleware.ErrorHandler())
+	r.Use(middleware.DemoMode(deps.DemoMode))
 
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound,
@@ -32,7 +35,7 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 
 	api := r.Group(basePath)
 	registerHealthCheck(api)
-	user.RegisterRoutes(api, deps.UserHandler, deps.JWTSecret)
+	user.RegisterRoutes(api, deps.AuthHandler, deps.UserHandler, deps.JWTSecret)
 	knowledge.RegisterRoutes(api, deps.KnowledgeHandler, middleware.Auth(deps.JWTSecret))
 
 	return r

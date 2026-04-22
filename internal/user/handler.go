@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/YuHangN/ragent-go/pkg/errorcode"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -24,12 +25,12 @@ func (h *Handler) Login(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "请求参数错误"))
+		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
 		return
 	}
 	vo, err := h.svc.Login(req.Username, req.Password)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
+		_ = c.Error(apperror.NewClientMsg(err.Error()))
 		return
 	}
 
@@ -57,7 +58,7 @@ func (h *Handler) PageUsers(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	result, err := h.svc.PageQuery(keyword, page, size)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail[any](errorcode.ServiceError, "查询失败"))
+		_ = c.Error(apperror.NewServiceWrap("查询失败", err, errorcode.ServiceError))
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(result))
@@ -72,12 +73,12 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		Avatar   string `json:"avatar"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "请求参数错误"))
+		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
 		return
 	}
 	id, err := h.svc.Create(req.Username, req.Password, req.Role, req.Avatar)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
+		_ = c.Error(apperror.NewClientMsg(err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(id))
@@ -87,7 +88,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 func (h *Handler) UpdateUser(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "用户ID非法"))
+		_ = c.Error(apperror.NewClientMsg("用户ID非法"))
 		return
 	}
 	var req struct {
@@ -97,11 +98,11 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		Avatar   *string `json:"avatar"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "请求参数错误"))
+		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
 		return
 	}
 	if err := h.svc.Update(id, req.Username, req.Password, req.Role, req.Avatar); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
+		_ = c.Error(apperror.NewClientMsg(err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, response.Success[any](nil))
@@ -111,11 +112,11 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 func (h *Handler) DeleteUser(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "用户ID非法"))
+		_ = c.Error(apperror.NewClientMsg("用户ID非法"))
 		return
 	}
 	if err := h.svc.Delete(id); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
+		_ = c.Error(apperror.NewClientMsg(err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, response.Success[any](nil))
@@ -126,7 +127,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	userIDStr := c.GetString("userID")
 	userID, err := strconv.ParseInt(userIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "用户ID非法"))
+		_ = c.Error(apperror.NewClientMsg("用户ID非法"))
 		return
 	}
 
@@ -135,11 +136,11 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		NewPassword     string `json:"newPassword"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, "请求参数错误"))
+		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
 		return
 	}
 	if err := h.svc.ChangePassword(userID, req.CurrentPassword, req.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail[any](errorcode.ClientError, err.Error()))
+		_ = c.Error(apperror.NewClientMsg(err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, response.Success[any](nil))

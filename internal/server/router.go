@@ -5,6 +5,7 @@ import (
 
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/user"
+	"github.com/YuHangN/ragent-go/pkg/errorcode"
 	"github.com/YuHangN/ragent-go/pkg/middleware"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,12 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	r.Use(middleware.CORS())
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
+	r.Use(middleware.ErrorHandler())
+
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound,
+			response.Fail[any](errorcode.ClientError.Code(), "接口不存在: "+c.Request.URL.Path))
+	})
 
 	api := r.Group(basePath)
 	registerHealthCheck(api)

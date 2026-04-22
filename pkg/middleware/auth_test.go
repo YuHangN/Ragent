@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/YuHangN/ragent-go/pkg/jwt"
+	"github.com/YuHangN/ragent-go/pkg/usercontext"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -25,8 +26,8 @@ func authRouter() *gin.Engine {
 	r := gin.New()
 	r.Use(Auth(testSecret))
 	r.GET("/protected", func(c *gin.Context) {
-		uid, _ := c.Get("userID")
-		c.JSON(http.StatusOK, gin.H{"userID": uid})
+		u := usercontext.Require(c)
+		c.JSON(http.StatusOK, gin.H{"userID": u.UserID, "username": u.Username})
 	})
 	return r
 }

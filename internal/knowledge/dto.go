@@ -52,6 +52,13 @@ type DocSearchRequest struct {
 
 // ──────────────────────── Chunk Request ────────────────────────
 
+// ChunkCreateRequest 对应 Java KnowledgeChunkCreateRequest。
+type ChunkCreateRequest struct {
+	Content string `json:"content" binding:"required"`
+	Index   *int   `json:"index"`   // 可选，为空时自动取 maxIndex+1
+	ChunkID string `json:"chunkId"` // 可选，为空时自动生成 Snowflake
+}
+
 type ChunkUpdateRequest struct {
 	Content string `json:"content" binding:"required"`
 }

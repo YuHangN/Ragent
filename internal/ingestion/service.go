@@ -121,7 +121,7 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 	if runErr != nil {
 		status = knowledge.DocStatusFailed
 	}
-	_ = s.docRepo.UpdateStatus(docID, status)
+	_ = s.docRepo.UpdateStatus(docID, status.String())
 	if runErr == nil {
 		_ = s.docRepo.UpdateChunkCount(docID, len(ic.Chunks))
 	}

@@ -141,18 +141,3 @@ type PageResult[T any] struct {
 	Total   int64 `json:"total"`
 	Records []T   `json:"records"`
 }
-
-// ──────────────────────── 辅助常量 ────────────────────────
-
-const (
-	DocStatusPending = "pending"
-	DocStatusRunning = "running"
-	DocStatusSuccess = "success"
-	DocStatusFailed  = "failed"
-
-	SourceTypeFile = "file"
-	SourceTypeURL  = "url"
-
-	ProcessModeChunk    = "chunk"
-	ProcessModePipeline = "pipeline"
-)

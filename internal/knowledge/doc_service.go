@@ -52,13 +52,13 @@ func (s *DocService) Upload(
 	}
 	if sourceType == "" {
 		if file != nil {
-			sourceType = SourceTypeFile
+			sourceType = SourceTypeFile.String()
 		} else {
-			sourceType = SourceTypeURL
+			sourceType = SourceTypeURL.String()
 		}
 	}
 
-	if sourceType == SourceTypeURL && strings.TrimSpace(sourceLocation) == "" {
+	if sourceType == SourceTypeURL.String() && strings.TrimSpace(sourceLocation) == "" {
 		return nil, errors.New("来源地址不能为空")
 	}
 
@@ -80,7 +80,7 @@ func (s *DocService) Upload(
 	}
 
 	if processMode == "" {
-		processMode = ProcessModeChunk
+		processMode = ProcessModeChunk.String()
 	}
 
 	doc := &KnowledgeDocument{
@@ -96,7 +96,7 @@ func (s *DocService) Upload(
 		FileType:        fileType,
 		FileSize:        fileSize,
 		ProcessMode:     processMode,
-		Status:          DocStatusPending,
+		Status:          DocStatusPending.String(),
 		CreatedBy:       createdBy,
 		UpdatedBy:       createdBy,
 	}
@@ -116,7 +116,7 @@ func (s *DocService) StartChunk(docIDStr string) error {
 	if _, err := s.docRepo.FindByID(docID); err != nil {
 		return errors.New("文档不存在")
 	}
-	if err := s.docRepo.UpdateStatus(docID, DocStatusRunning); err != nil {
+	if err := s.docRepo.UpdateStatus(docID, DocStatusRunning.String()); err != nil {
 		return err
 	}
 
@@ -125,7 +125,7 @@ func (s *DocService) StartChunk(docIDStr string) error {
 			if err := s.chunkProcessor.ProcessDocument(context.Background(), docID); err != nil {
 				zap.L().Error("chunk processing failed",
 					zap.Int64("docID", docID), zap.Error(err))
-				_ = s.docRepo.UpdateStatus(docID, DocStatusFailed)
+				_ = s.docRepo.UpdateStatus(docID, DocStatusFailed.String())
 			}
 		}()
 	}

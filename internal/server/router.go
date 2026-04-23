@@ -12,11 +12,13 @@ import (
 )
 
 type Deps struct {
-	AuthHandler      *user.AuthHandler
-	UserHandler      *user.UserHandler
-	KnowledgeHandler *knowledge.Handler
-	JWTSecret        string
-	DemoMode         bool
+	AuthHandler           *user.AuthHandler
+	UserHandler           *user.UserHandler
+	KnowledgeKBHandler    *knowledge.KBHandler
+	KnowledgeDocHandler   *knowledge.DocHandler
+	KnowledgeChunkHandler *knowledge.ChunkHandler
+	JWTSecret             string
+	DemoMode              bool
 }
 
 func NewRouter(basePath string, deps Deps) *gin.Engine {
@@ -36,7 +38,7 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	api := r.Group(basePath)
 	registerHealthCheck(api)
 	user.RegisterRoutes(api, deps.AuthHandler, deps.UserHandler, deps.JWTSecret)
-	knowledge.RegisterRoutes(api, deps.KnowledgeHandler, middleware.Auth(deps.JWTSecret))
+	knowledge.RegisterRoutes(api, deps.KnowledgeKBHandler, deps.KnowledgeDocHandler, deps.KnowledgeChunkHandler, middleware.Auth(deps.JWTSecret))
 
 	return r
 }

@@ -77,15 +77,19 @@ func main() {
 	)
 	docSvc.SetChunkProcessor(ingestionSvc)
 
-	knowledgeHandler := knowledge.NewHandler(kbSvc, docSvc, chunkSvc)
+	knowledgeKBHandler := knowledge.NewKBHandler(kbSvc)
+	knowledgeDocHandler := knowledge.NewDocHandler(docSvc)
+	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
 	// 7. 创建路由
 	router := server.NewRouter(cfg.Server.BasePath, server.Deps{
-		AuthHandler:      authHandler,
-		UserHandler:      userHandler,
-		KnowledgeHandler: knowledgeHandler,
-		JWTSecret:        cfg.App.JWTSecret,
-		DemoMode:         cfg.App.DemoMode,
+		AuthHandler:           authHandler,
+		UserHandler:           userHandler,
+		KnowledgeKBHandler:    knowledgeKBHandler,
+		KnowledgeDocHandler:   knowledgeDocHandler,
+		KnowledgeChunkHandler: knowledgeChunkHandler,
+		JWTSecret:             cfg.App.JWTSecret,
+		DemoMode:              cfg.App.DemoMode,
 	})
 
 	// 8. 启动服务器（阻塞，直到收到终止信号）

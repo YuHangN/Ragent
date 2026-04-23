@@ -31,7 +31,7 @@ func NewKBService(repo KBRepo, docRepo DocRepo, s3Client *s3.Client, milvusClien
 }
 
 // Create 创建知识库：DB 记录 → S3 bucket → Milvus collection。
-func (s *KBService) Create(name, embeddingModel, createdBy string) (string, error) {
+func (s *KBService) Create(name, embeddingModel, operator string) (string, error) {
 	name = NormalizeName(name)
 	if name == "" {
 		return "", errors.New("知识库名称不能为空")
@@ -47,8 +47,8 @@ func (s *KBService) Create(name, embeddingModel, createdBy string) (string, erro
 	kb := &KnowledgeBase{
 		Name:           name,
 		EmbeddingModel: embeddingModel,
-		CreatedBy:      createdBy,
-		UpdatedBy:      createdBy,
+		CreatedBy:      operator,
+		UpdatedBy:      operator,
 	}
 	if err := s.repo.Create(kb); err != nil {
 		return "", err
@@ -71,7 +71,7 @@ func (s *KBService) Create(name, embeddingModel, createdBy string) (string, erro
 }
 
 // Rename 重命名知识库。
-func (s *KBService) Rename(kbID int64, newName, updatedBy string) error {
+func (s *KBService) Rename(kbID int64, newName, operator string) error {
 	newName = NormalizeName(newName)
 	if newName == "" {
 		return errors.New("知识库名称不能为空")
@@ -88,7 +88,7 @@ func (s *KBService) Rename(kbID int64, newName, updatedBy string) error {
 		return errors.New("知识库名称已存在：" + newName)
 	}
 	kb.Name = newName
-	kb.UpdatedBy = updatedBy
+	kb.UpdatedBy = operator
 	return s.repo.Update(kb)
 }
 

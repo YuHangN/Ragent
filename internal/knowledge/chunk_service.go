@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+
+	"github.com/YuHangN/ragent-go/pkg/apperror"
 )
 
 // ChunkService 管理 Chunk 的 CRUD 和启用/禁用。
@@ -39,7 +41,7 @@ func (s *ChunkService) Page(docIDStr string, enabled *int, page, size int) (*Pag
 }
 
 // Create 手动新增 Chunk，自动分配 chunkIndex。
-func (s *ChunkService) Create(docIDStr, content, createdBy string) (*KnowledgeChunkVO, error) {
+func (s *ChunkService) Create(docIDStr, content, operator string) (*KnowledgeChunkVO, error) {
 	docID, err := parseID(docIDStr)
 	if err != nil {
 		return nil, errors.New("文档ID非法")
@@ -64,7 +66,8 @@ func (s *ChunkService) Create(docIDStr, content, createdBy string) (*KnowledgeCh
 		ContentHash: hashContent(content),
 		CharCount:   len([]rune(content)), // rune 正确统计 Unicode 字符数
 		Enabled:     1,
-		CreatedBy:   createdBy,
+		CreatedBy:   operator,
+		UpdatedBy:   operator,
 	}
 	if err := s.chunkRepo.Create(chunk); err != nil {
 		return nil, err
@@ -75,21 +78,22 @@ func (s *ChunkService) Create(docIDStr, content, createdBy string) (*KnowledgeCh
 }
 
 // Update 修改 Chunk 内容，同步更新 hash 和字符数。
-func (s *ChunkService) Update(docIDStr, chunkIDStr, content string) error {
+func (s *ChunkService) Update(docIDStr, chunkIDStr, content, operator string) error {
 	if _, err := parseID(docIDStr); err != nil {
-		return errors.New("文档ID非法")
+		return apperror.NewClientMsg("文档ID非法")
 	}
 	chunkID, err := parseID(chunkIDStr)
 	if err != nil {
-		return errors.New("ChunkID非法")
+		return apperror.NewClientMsg("ChunkID非法")
 	}
 	chunk, err := s.chunkRepo.FindByID(chunkID)
 	if err != nil {
-		return errors.New("Chunk不存在")
+		return apperror.NewClientMsg("Chunk不存在")
 	}
 	chunk.Content = content
 	chunk.ContentHash = hashContent(content)
 	chunk.CharCount = len([]rune(content))
+	chunk.UpdatedBy = operator
 
 	return s.chunkRepo.Update(chunk)
 }
@@ -113,7 +117,7 @@ func (s *ChunkService) Delete(docIDStr, chunkIDStr string) error {
 }
 
 // EnableChunk 启用或禁用单个 Chunk。
-func (s *ChunkService) EnableChunk(docIDStr, chunkIDStr string, enabled bool) error {
+func (s *ChunkService) EnableChunk(docIDStr, chunkIDStr string, enabled bool, operator string) error {
 	if _, err := parseID(docIDStr); err != nil {
 		return errors.New("文档ID非法")
 	}
@@ -121,16 +125,23 @@ func (s *ChunkService) EnableChunk(docIDStr, chunkIDStr string, enabled bool) er
 	if err != nil {
 		return errors.New("ChunkID非法")
 	}
-	return s.chunkRepo.SetEnabled(chunkID, boolToInt(enabled))
+	chunk, err := s.chunkRepo.FindByID(chunkID)
+	if err != nil {
+		return apperror.NewClientMsg("Chunk不存在")
+	}
+
+	chunk.Enabled = boolToInt(enabled)
+	chunk.UpdatedBy = operator
+	return s.chunkRepo.Update(chunk)
 }
 
 // BatchEnable 批量启用/禁用，ids 为空时对整个文档生效。
-func (s *ChunkService) BatchEnable(docIDStr string, ids []int64, enabled bool) error {
+func (s *ChunkService) BatchEnable(docIDStr string, ids []int64, enabled bool, operator string) error {
 	docID, err := parseID(docIDStr)
 	if err != nil {
 		return errors.New("文档ID非法")
 	}
-	return s.chunkRepo.SetEnabledByDocID(docID, ids, boolToInt(enabled))
+	return s.chunkRepo.SetEnabledByDocID(docID, ids, boolToInt(enabled), operator)
 }
 
 // ──────────────────────────────────────────────────────────

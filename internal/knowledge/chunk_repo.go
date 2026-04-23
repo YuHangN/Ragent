@@ -12,7 +12,7 @@ type ChunkRepo interface {
 	PageByDocID(docID int64, enabled *int, page, size int) ([]KnowledgeChunk, int64, error)
 	MaxIndexByDocID(docID int64) (int, error)
 	SetEnabled(id int64, enabled int) error
-	SetEnabledByDocID(docID int64, ids []int64, enabled int) error
+	SetEnabledByDocID(docID int64, ids []int64, enabled int, operator string) error
 	DeleteByDocID(docID int64) error
 	FindEnabledByDocID(docID int64) ([]KnowledgeChunk, error)
 }
@@ -70,12 +70,15 @@ func (r *gormChunkRepo) SetEnabled(id int64, enabled int) error {
 }
 
 // SetEnabledByDocID UPDATE knowledge_chunks SET enabled = ? WHERE doc_id = ? [AND id IN (?)]
-func (r *gormChunkRepo) SetEnabledByDocID(docID int64, ids []int64, enabled int) error {
+func (r *gormChunkRepo) SetEnabledByDocID(docID int64, ids []int64, enabled int, operator string) error {
 	q := r.db.Model(&KnowledgeChunk{}).Where("doc_id = ?", docID)
 	if len(ids) > 0 {
 		q = q.Where("id IN ?", ids)
 	}
-	return q.Update("enabled", enabled).Error
+	return q.Updates(map[string]any{
+		"enabled":    enabled,
+		"updated_by": operator,
+	}).Error
 }
 
 // DeleteByDocID DELETE FROM knowledge_chunks WHERE doc_id = ?

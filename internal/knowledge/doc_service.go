@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.uber.org/zap"
@@ -37,10 +38,10 @@ func (s *DocService) SetChunkProcessor(p ChunkProcessor) { s.chunkProcessor = p 
 // Upload 保存文档元数据并把文件上传到 S3（URL 来源则只记录元数据）。
 // file 为 nil 时表示 URL 类型来源。
 func (s *DocService) Upload(
-	kbIDStr, sourceType, sourceLocation, processMode, scheduleCron string,
+	kbIDStr, sourceType, sourceLocation, processMode, scheduleCron, chunkStrategy, chunkConfig string,
 	scheduleEnabled bool,
 	file io.Reader, fileName string, fileSize int64,
-	createdBy string,
+	operator string,
 ) (*KnowledgeDocumentVO, error) {
 	kbID, err := parseID(kbIDStr)
 	if err != nil {
@@ -96,9 +97,11 @@ func (s *DocService) Upload(
 		FileType:        fileType,
 		FileSize:        fileSize,
 		ProcessMode:     processMode,
+		ChunkStrategy:   chunkStrategy,
+		ChunkConfig:     chunkConfig,
 		Status:          DocStatusPending.String(),
-		CreatedBy:       createdBy,
-		UpdatedBy:       createdBy,
+		CreatedBy:       operator,
+		UpdatedBy:       operator,
 	}
 	if err := s.docRepo.Create(doc); err != nil {
 		return nil, err
@@ -146,6 +149,49 @@ func (s *DocService) Get(docIDStr string) (*KnowledgeDocumentVO, error) {
 	return toDocVO(*doc), nil
 }
 
+// Update 更新文档元信息（docName / schedule / processMode / chunk 配置）。
+func (s *DocService) Update(docIDStr string, req DocUpdateRequest, operator string) error {
+	docID, err := parseID(docIDStr)
+	if err != nil {
+		return apperror.NewClientMsg("文档ID非法")
+	}
+	doc, err := s.docRepo.FindByID(docID)
+	if err != nil {
+		return apperror.NewClientMsg("文档不存在")
+	}
+	if req.DocName != nil {
+		if strings.TrimSpace(*req.DocName) == "" {
+			return apperror.NewClientMsg("文档名不能为空")
+		}
+		doc.DocName = *req.DocName
+	}
+	if req.ScheduleEnabled != nil {
+		doc.ScheduleEnabled = boolToInt(*req.ScheduleEnabled)
+	}
+	if req.ScheduleCron != nil {
+		doc.ScheduleCron = *req.ScheduleCron
+	}
+	if req.ProcessMode != nil {
+		mode, err := NormalizeProcessMode(*req.ProcessMode)
+		if err != nil {
+			return err
+		}
+		doc.ProcessMode = mode.String()
+	}
+	if req.ChunkStrategy != nil {
+		doc.ChunkStrategy = *req.ChunkStrategy
+	}
+	if req.ChunkConfig != nil {
+		doc.ChunkConfig = *req.ChunkConfig
+	}
+	doc.UpdatedBy = operator
+
+	if err := s.docRepo.Update(doc); err != nil {
+		return apperror.NewServiceWrap("更新文档失败", err, nil)
+	}
+	return nil
+}
+
 // Delete 逻辑删除文档。
 func (s *DocService) Delete(docIDStr string) error {
 	docID, err := parseID(docIDStr)
@@ -156,7 +202,7 @@ func (s *DocService) Delete(docIDStr string) error {
 }
 
 // Enable 启用或禁用文档。
-func (s *DocService) Enable(docIDStr string, enabled bool) error {
+func (s *DocService) Enable(docIDStr string, enabled bool, operator string) error {
 	docID, err := parseID(docIDStr)
 	if err != nil {
 		return errors.New("文档ID非法")
@@ -166,6 +212,7 @@ func (s *DocService) Enable(docIDStr string, enabled bool) error {
 		return errors.New("文档不存在")
 	}
 	doc.Enabled = boolToInt(enabled)
+	doc.UpdatedBy = operator
 	return s.docRepo.Update(doc)
 }
 

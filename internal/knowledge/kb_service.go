@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	milvclient "github.com/milvus-io/milvus-sdk-go/v2/client"
@@ -114,7 +115,7 @@ func (s *KBService) GetByID(kbID int64) (*KnowledgeBaseVO, error) {
 }
 
 // Page 分页查询知识库（附带文档数）。
-func (s *KBService) Page(name string, page, size int) (*PageResult[KnowledgeBaseVO], error) {
+func (s *KBService) Page(name string, page, size int) (*response.PageResult[KnowledgeBaseVO], error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -135,7 +136,7 @@ func (s *KBService) Page(name string, page, size int) (*PageResult[KnowledgeBase
 	for _, kb := range kbs {
 		records = append(records, *toKBVO(kb, docCounts[kb.ID]))
 	}
-	return &PageResult[KnowledgeBaseVO]{Total: total, Records: records}, nil
+	return &response.PageResult[KnowledgeBaseVO]{Total: total, Records: records}, nil
 }
 
 // ──────────────────────────────────────────────────────────

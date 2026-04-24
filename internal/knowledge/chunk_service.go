@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/YuHangN/ragent-go/pkg/apperror"
+	"github.com/YuHangN/ragent-go/pkg/response"
 )
 
 // ChunkService 管理 Chunk 的 CRUD 和启用/禁用。
@@ -19,7 +20,7 @@ func NewChunkService(chunkRepo ChunkRepo, docRepo DocRepo) *ChunkService {
 }
 
 // Page 分页查询 Chunk，enabled 为 nil 时不过滤。
-func (s *ChunkService) Page(docIDStr string, enabled *int, page, size int) (*PageResult[KnowledgeChunkVO], error) {
+func (s *ChunkService) Page(docIDStr string, enabled *int, page, size int) (*response.PageResult[KnowledgeChunkVO], error) {
 	docID, err := parseID(docIDStr)
 	if err != nil {
 		return nil, errors.New("文档ID非法")
@@ -37,7 +38,7 @@ func (s *ChunkService) Page(docIDStr string, enabled *int, page, size int) (*Pag
 		records = append(records, *toChunkVO(c))
 	}
 
-	return &PageResult[KnowledgeChunkVO]{Total: total, Records: records}, nil
+	return &response.PageResult[KnowledgeChunkVO]{Total: total, Records: records}, nil
 }
 
 // Create 手动新增 Chunk，自动分配 chunkIndex。

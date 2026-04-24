@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/YuHangN/ragent-go/pkg/apperror"
+	"github.com/YuHangN/ragent-go/pkg/response"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -26,7 +27,7 @@ func (s *UserService) GetByID(id int64) (*User, error) {
 }
 
 // PageQuery 分页查询用户（管理员用）。
-func (s *UserService) PageQuery(req UserPageRequest) (*PageResult[UserVO], error) {
+func (s *UserService) PageQuery(req UserPageRequest) (*response.PageResult[UserVO], error) {
 	page := req.Current
 	if page <= 0 {
 		page = 1
@@ -43,7 +44,7 @@ func (s *UserService) PageQuery(req UserPageRequest) (*PageResult[UserVO], error
 	for _, u := range users {
 		records = append(records, toVO(u))
 	}
-	return &PageResult[UserVO]{Total: total, Records: records}, nil
+	return &response.PageResult[UserVO]{Total: total, Records: records}, nil
 }
 
 // Create 新建用户（管理员）。

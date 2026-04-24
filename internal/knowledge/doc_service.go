@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/YuHangN/ragent-go/pkg/apperror"
+	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.uber.org/zap"
@@ -217,7 +218,7 @@ func (s *DocService) Enable(docIDStr string, enabled bool, operator string) erro
 }
 
 // Page 分页查询文档。
-func (s *DocService) Page(kbIDStr, status, keyword string, page, size int) (*PageResult[KnowledgeDocumentVO], error) {
+func (s *DocService) Page(kbIDStr, status, keyword string, page, size int) (*response.PageResult[KnowledgeDocumentVO], error) {
 	kbID, err := parseID(kbIDStr)
 	if err != nil {
 		return nil, errors.New("知识库ID非法")
@@ -230,7 +231,7 @@ func (s *DocService) Page(kbIDStr, status, keyword string, page, size int) (*Pag
 	for _, d := range docs {
 		records = append(records, *toDocVO(d))
 	}
-	return &PageResult[KnowledgeDocumentVO]{Total: total, Records: records}, nil
+	return &response.PageResult[KnowledgeDocumentVO]{Total: total, Records: records}, nil
 }
 
 // Search 文档关键字搜索。

@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	milvusclient "github.com/milvus-io/milvus-sdk-go/v2/client"
+	"go.uber.org/zap"
 )
 
 // IngestionService is the public entry point for the ingestion pipeline.
@@ -21,6 +23,7 @@ type IngestionService struct {
 	chunker   ChunkerStrategy
 	chunkSize int
 	overlap   int
+	chunkLog  *knowledge.ChunkLogService
 }
 
 type IngestionServiceConfig struct {
@@ -36,6 +39,7 @@ func NewIngestionService(
 	docRepo knowledge.DocRepo,
 	chunkRepo knowledge.ChunkRepo,
 	cfg IngestionServiceConfig,
+	chunkLog *knowledge.ChunkLogService,
 ) *IngestionService {
 	if cfg.ChunkerStrategy == nil {
 		cfg.ChunkerStrategy = FixedSizeChunker{}
@@ -56,7 +60,39 @@ func NewIngestionService(
 		chunker:   cfg.ChunkerStrategy,
 		chunkSize: cfg.ChunkSize,
 		overlap:   cfg.Overlap,
+		chunkLog:  chunkLog,
 	}
+}
+
+// ProcessDocument fetches, parses, chunks, embeds, and indexes a document.
+func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) error {
+	start := time.Now()
+	doc, err := s.docRepo.FindByID(docID)
+	if err != nil {
+		return err
+	}
+
+	logID, logErr := s.chunkLog.StartLog(docID, doc.ProcessMode, doc.ChunkStrategy)
+	if logErr != nil {
+		zap.L().Warn("chunklog start failed (non-fatal)", zap.Error(logErr))
+	}
+
+	err = s.processDocumentImpl(ctx, docID)
+	elapsed := time.Since(start).Milliseconds()
+
+	if logID > 0 {
+		if err != nil {
+			_ = s.chunkLog.FinishFailed(logID, err.Error())
+		} else {
+			_ = s.chunkLog.FinishSuccess(logID, 0, 0, elapsed, 0)
+		}
+	}
+
+	return err
+}
+
+func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64) error {
+
 }
 
 // ProcessDocument fetches, parses, chunks, embeds, and indexes a document.

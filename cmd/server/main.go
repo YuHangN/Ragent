@@ -28,9 +28,11 @@ func main() {
 	logger.Init()
 	zap.ReplaceGlobals(logger.L)
 
-	// 3. 初始化基础设施（仅连接，不做业务）
+	// 3. 初始化基础设施 client（DB / Cache / Object Storage / Vector DB）
 	gormDB := db.NewMySQL(&cfg.DB)
 	cache.NewRedis(&cfg.Redis)
+	s3Client := storage.NewS3Client(&cfg.RustFS)
+	milvusClient := vector.NewMilvus(&cfg.Milvus)
 
 	// 4. 初始化 AI 客户端
 	embeddingService, err := aiclient.NewEmbeddingService(&cfg.AI)
@@ -45,26 +47,24 @@ func main() {
 	if err != nil {
 		zap.S().Fatalf("init rerank service: %v", err)
 	}
-	_ = embeddingService // Phase 5 ingestion pipeline
-	_ = llmService       // Phase 6 RAG core
-	_ = rerankService    // Phase 6 RAG retrieval
+	_ = llmService    // Phase 6 RAG core
+	_ = rerankService // Phase 6 RAG retrieval
 
-	// 5. 初始化用户模块依赖
+	// 5. 初始化用户模块
 	userRepo := user.NewUserRepo(gormDB)
 	userSvc := user.NewUserService(userRepo)
 	authSvc := user.NewAuthService(userRepo, cfg.App.JWTSecret, cfg.App.JWTExpireHours)
 	authHandler := user.NewAuthHandler(authSvc)
 	userHandler := user.NewUserHandler(userSvc)
 
-	// 6. 初始化知识库模块依赖
-	s3Client := storage.NewS3Client(&cfg.RustFS)
-	milvusClient := vector.NewMilvus(&cfg.Milvus)
-
+	// 6. 知识库模块：Repos
 	kbRepo := knowledge.NewKBRepo(gormDB)
 	docRepo := knowledge.NewDocRepo(gormDB)
 	chunkRepo := knowledge.NewChunkRepo(gormDB)
 	scheduleRepo := knowledge.NewScheduleRepo(gormDB)
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
+
+	// 7. 知识库模块：Services
 	fetcher := knowledge.NewHTTPFetcher()
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
@@ -72,30 +72,7 @@ func main() {
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
 
-	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(ctx context.Context, docID int64, body []byte, fileName, contentType string) error {
-		// 最小实现：把 body 上传 S3（复用 docSvc 内部逻辑）+ 清空 chunk + 触发重分块
-		// TODO: 细化 —— Phase 5 IngestionService 完整支持后补
-		zap.L().Info("schedule process doc",
-			zap.Int64("docID", docID),
-			zap.String("fileName", fileName),
-			zap.Int("bodySize", len(body)))
-		return docSvc.StartChunk(fmt.Sprintf("%d", docID))
-	})
-
-	jobCfg := knowledge.ScheduleJobConfig{
-		Owner:        fmt.Sprintf("ragent-go-%s-%d", hostname(), time.Now().UnixNano()),
-		LockSeconds:  cfg.RAG.Knowledge.Schedule.LockSeconds,
-		MaxFileBytes: cfg.RAG.Knowledge.Schedule.MaxFileSizeBytes,
-		BatchSize:    cfg.RAG.Knowledge.Schedule.BatchSize,
-		ScanInterval: time.Duration(cfg.RAG.Knowledge.Schedule.ScanDelayMs) * time.Millisecond,
-	}
-	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, fetcher, scheduleProc, jobCfg)
-
-	jobCtx, cancelJob := context.WithCancel(context.Background())
-	defer cancelJob()
-	go scheduleJob.Start(jobCtx)
-
-	// 7. Ingestion pipeline 依赖
+	// 8. Ingestion pipeline（Phase 5）
 	ingestionSvc := ingestion.NewIngestionService(
 		s3Client,
 		milvusClient,
@@ -109,13 +86,37 @@ func main() {
 		},
 		chunkLogSvc,
 	)
+
+	// 9. Wire 跨模块依赖（必须在 schedule job 启动前完成，避免 race）
 	docSvc.SetChunkProcessor(ingestionSvc)
 
+	// 10. Handlers
 	knowledgeKBHandler := knowledge.NewKBHandler(kbSvc)
 	knowledgeDocHandler := knowledge.NewDocHandler(docSvc, chunkLogSvc)
 	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
-	// 7. 创建路由
+	// 11. 启动后台 schedule job（依赖已全部就绪）
+	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(ctx context.Context, docID int64, body []byte, fileName, contentType string) error {
+		zap.L().Info("schedule process doc",
+			zap.Int64("docID", docID),
+			zap.String("fileName", fileName),
+			zap.Int("bodySize", len(body)))
+		return docSvc.StartChunk(fmt.Sprintf("%d", docID))
+	})
+
+	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, fetcher, scheduleProc, knowledge.ScheduleJobConfig{
+		Owner:        fmt.Sprintf("ragent-go-%s-%d", hostname(), time.Now().UnixNano()),
+		LockSeconds:  cfg.RAG.Knowledge.Schedule.LockSeconds,
+		MaxFileBytes: cfg.RAG.Knowledge.Schedule.MaxFileSizeBytes,
+		BatchSize:    cfg.RAG.Knowledge.Schedule.BatchSize,
+		ScanInterval: time.Duration(cfg.RAG.Knowledge.Schedule.ScanDelayMs) * time.Millisecond,
+	})
+
+	jobCtx, cancelJob := context.WithCancel(context.Background())
+	defer cancelJob()
+	go scheduleJob.Start(jobCtx)
+
+	// 12. Router & Server
 	router := server.NewRouter(cfg.Server.BasePath, server.Deps{
 		AuthHandler:           authHandler,
 		UserHandler:           userHandler,
@@ -126,7 +127,6 @@ func main() {
 		DemoMode:              cfg.App.DemoMode,
 	})
 
-	// 8. 启动服务器（阻塞，直到收到终止信号）
 	server.New(cfg.Server.Port, router).Start()
 }
 

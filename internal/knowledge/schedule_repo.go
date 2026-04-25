@@ -13,6 +13,7 @@ type ScheduleRepo interface {
 
 	// FindDue 返回 enabled=1 且 next_run_time <= now 且未被锁定的记录（至多 limit 条）。
 	FindDue(now time.Time, limit int) ([]KnowledgeDocumentSchedule, error)
+	FindByID(scheduleID int64) (*KnowledgeDocumentSchedule, error)
 
 	// TryAcquireLock 用乐观锁抢占某条调度记录。返回 true 代表抢到；false 代表被其他实例占用。
 	TryAcquireLock(scheduleID int64, owner string, lockUntil time.Time) (bool, error)
@@ -71,6 +72,14 @@ func (r *gormScheduleRepo) FindDue(now time.Time, limit int) ([]KnowledgeDocumen
 		Find(&items).Error
 
 	return items, err
+}
+
+func (r *gormScheduleRepo) FindByID(scheduleID int64) (*KnowledgeDocumentSchedule, error) {
+	var s KnowledgeDocumentSchedule
+	if err := r.db.First(&s, scheduleID).Error; err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 func (r *gormScheduleRepo) TryAcquireLock(scheduleID int64, owner string, lockUntil time.Time) (bool, error) {

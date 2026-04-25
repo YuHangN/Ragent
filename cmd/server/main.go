@@ -58,9 +58,11 @@ func main() {
 	kbRepo := knowledge.NewKBRepo(gormDB)
 	docRepo := knowledge.NewDocRepo(gormDB)
 	chunkRepo := knowledge.NewChunkRepo(gormDB)
+	scheduleRepo := knowledge.NewScheduleRepo(gormDB)
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
-	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client)
+	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
+	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, scheduleSvc)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
 

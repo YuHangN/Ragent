@@ -27,10 +27,11 @@ type DocService struct {
 	chunkRepo      ChunkRepo
 	s3             *s3.Client
 	chunkProcessor ChunkProcessor // Phase 5 注入
+	schedule       *ScheduleService
 }
 
-func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client) *DocService {
-	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client}
+func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, scheduleSvc *ScheduleService) *DocService {
+	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, schedule: scheduleSvc}
 }
 
 // SetChunkProcessor Phase 5 完成后由 main.go 调用注入实际处理器。
@@ -105,6 +106,10 @@ func (s *DocService) Upload(
 		UpdatedBy:       operator,
 	}
 	if err := s.docRepo.Create(doc); err != nil {
+		return nil, err
+	}
+
+	if err := s.schedule.Reconcile(doc); err != nil {
 		return nil, err
 	}
 

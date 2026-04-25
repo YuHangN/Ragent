@@ -74,3 +74,10 @@ ai:
         model: "rerank-multilingual-v3.0"
         priority: 1
 
+rag:
+  knowledge:
+    schedule:
+      scan-delay-ms: 10000
+      lock-seconds: 900
+      batch-size: 20
+      max-file-size-bytes: 104857600

@@ -115,6 +115,20 @@ type RAGConfig struct {
 	Search       SearchConfig        `mapstructure:"search"`
 	Trace        TraceConfig         `mapstructure:"trace"`
 	MCP          MCPConfig           `mapstructure:"mcp"`
+	Knowledge    KnowledgeConfig     `mapstructure:"knowledge"`
+}
+
+// KnowledgeConfig Knowledge 模块相关配置。
+type KnowledgeConfig struct {
+	Schedule KnowledgeScheduleConfig `mapstructure:"schedule"`
+}
+
+// KnowledgeScheduleConfig URL 文档定时刷新配置，对齐 Java rag.knowledge.schedule。
+type KnowledgeScheduleConfig struct {
+	ScanDelayMs      int64 `mapstructure:"scan-delay-ms"`       // 默认 10000
+	LockSeconds      int64 `mapstructure:"lock-seconds"`        // 默认 900
+	BatchSize        int   `mapstructure:"batch-size"`          // 默认 20
+	MaxFileSizeBytes int64 `mapstructure:"max-file-size-bytes"` // 默认 104857600 (100MB)
 }
 
 // DefaultVectorConfig 表示默认知识库集合的向量参数。

@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
 	"github.com/YuHangN/ragent-go/config"
 	"github.com/YuHangN/ragent-go/infra/cache"
 	"github.com/YuHangN/ragent-go/infra/db"
@@ -60,11 +65,35 @@ func main() {
 	chunkRepo := knowledge.NewChunkRepo(gormDB)
 	scheduleRepo := knowledge.NewScheduleRepo(gormDB)
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
+	fetcher := knowledge.NewHTTPFetcher()
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, scheduleSvc)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
+
+	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(ctx context.Context, docID int64, body []byte, fileName, contentType string) error {
+		// 最小实现：把 body 上传 S3（复用 docSvc 内部逻辑）+ 清空 chunk + 触发重分块
+		// TODO: 细化 —— Phase 5 IngestionService 完整支持后补
+		zap.L().Info("schedule process doc",
+			zap.Int64("docID", docID),
+			zap.String("fileName", fileName),
+			zap.Int("bodySize", len(body)))
+		return docSvc.StartChunk(fmt.Sprintf("%d", docID))
+	})
+
+	jobCfg := knowledge.ScheduleJobConfig{
+		Owner:        fmt.Sprintf("ragent-go-%s-%d", hostname(), time.Now().UnixNano()),
+		LockSeconds:  cfg.RAG.Knowledge.Schedule.LockSeconds,
+		MaxFileBytes: cfg.RAG.Knowledge.Schedule.MaxFileSizeBytes,
+		BatchSize:    cfg.RAG.Knowledge.Schedule.BatchSize,
+		ScanInterval: time.Duration(cfg.RAG.Knowledge.Schedule.ScanDelayMs) * time.Millisecond,
+	}
+	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, fetcher, scheduleProc, jobCfg)
+
+	jobCtx, cancelJob := context.WithCancel(context.Background())
+	defer cancelJob()
+	go scheduleJob.Start(jobCtx)
 
 	// 7. Ingestion pipeline 依赖
 	ingestionSvc := ingestion.NewIngestionService(
@@ -99,4 +128,12 @@ func main() {
 
 	// 8. 启动服务器（阻塞，直到收到终止信号）
 	server.New(cfg.Server.Port, router).Start()
+}
+
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return h
 }

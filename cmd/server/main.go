@@ -58,9 +58,11 @@ func main() {
 	kbRepo := knowledge.NewKBRepo(gormDB)
 	docRepo := knowledge.NewDocRepo(gormDB)
 	chunkRepo := knowledge.NewChunkRepo(gormDB)
+	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
+	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
 
 	// 7. Ingestion pipeline 依赖
 	ingestionSvc := ingestion.NewIngestionService(
@@ -74,6 +76,7 @@ func main() {
 			ChunkSize:       512,
 			Overlap:         128,
 		},
+		chunkLogSvc,
 	)
 	docSvc.SetChunkProcessor(ingestionSvc)
 

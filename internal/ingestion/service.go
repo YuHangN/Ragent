@@ -77,38 +77,32 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 		zap.L().Warn("chunklog start failed (non-fatal)", zap.Error(logErr))
 	}
 
-	err = s.processDocumentImpl(ctx, docID)
+	chunkCount, err := s.processDocumentImpl(ctx, docID)
 	elapsed := time.Since(start).Milliseconds()
 
 	if logID > 0 {
 		if err != nil {
-			_ = s.chunkLog.FinishFailed(logID, err.Error())
+			_ = s.chunkLog.FinishFailed(logID, err.Error(), elapsed)
 		} else {
-			_ = s.chunkLog.FinishSuccess(logID, 0, 0, elapsed, 0)
+			// Phase 3.5-B 只记录总耗时；子阶段细分留到 Phase 5.5 用 FinishSuccessDetailed
+			_ = s.chunkLog.FinishSuccess(logID, chunkCount, elapsed)
 		}
 	}
 
 	return err
 }
 
-func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64) error {
-
-}
-
-// ProcessDocument fetches, parses, chunks, embeds, and indexes a document.
-func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) error {
-	// 1. Load document metadata from DB.
+func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64) (int, error) {
+	// 1. 加载文档元信息
 	doc, err := s.docRepo.FindByID(docID)
 	if err != nil {
-		return fmt.Errorf("ingestion: load doc %d: %w", docID, err)
+		return 0, fmt.Errorf("ingestion: load doc %d: %w", docID, err)
 	}
 
 	// 2. 根据 KbID 推导 Milvus collection 名称（与 KBService 保持一致）。
 	collectionName := knowledge.BuildCollectionName(doc.KbID)
 
 	// 3. 构造 IngestionContext。
-	//    doc.SourceLocation 存储 "s3://bucket/key" 路径（对应 Java 的 sourceLocation 字段）。
-	//    doc.DocName 是文件名（对应 Java 的 docName 字段）。
 	ic := &IngestionContext{
 		DocID:            docID,
 		KBCollectionName: collectionName,
@@ -120,7 +114,7 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 		Status: "running",
 	}
 
-	// 4. 构造并运行管道。
+	// 4. 构造并运行管道：fetcher → parser → chunker → embedder → indexer
 	pipeline := NewPipeline(
 		NewFetcherNode(s.s3Client),
 		NewParserNode(),
@@ -131,9 +125,7 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 
 	runErr := pipeline.Run(ctx, ic)
 
-	// 5. 将 chunk 记录持久化到 MySQL。
-	//    ChunkRepo.Create 接收指针，无 ctx 参数。
-	//    KnowledgeChunk.Enabled 是 int（1=启用），非 bool。
+	// 5. 持久化 chunk 到 MySQL（仅 pipeline 成功时）
 	if runErr == nil {
 		for _, vc := range ic.Chunks {
 			if err := s.chunkRepo.Create(&knowledge.KnowledgeChunk{
@@ -151,8 +143,7 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 		}
 	}
 
-	// 6. 更新文档状态和 chunk 数量。
-	// DocRepo 接口将 UpdateStatus 和 UpdateChunkCount 拆为两个方法，均无 ctx 参数。
+	// 6. 更新文档状态和 chunk 数量
 	status := knowledge.DocStatusSuccess
 	if runErr != nil {
 		status = knowledge.DocStatusFailed
@@ -162,7 +153,11 @@ func (s *IngestionService) ProcessDocument(ctx context.Context, docID int64) err
 		_ = s.docRepo.UpdateChunkCount(docID, len(ic.Chunks))
 	}
 
-	return runErr
+	// 7. 返回给外层壳
+	if runErr != nil {
+		return 0, runErr
+	}
+	return len(ic.Chunks), nil
 }
 
 func hashContent(content string) string {

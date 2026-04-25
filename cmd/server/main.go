@@ -81,7 +81,7 @@ func main() {
 	docSvc.SetChunkProcessor(ingestionSvc)
 
 	knowledgeKBHandler := knowledge.NewKBHandler(kbSvc)
-	knowledgeDocHandler := knowledge.NewDocHandler(docSvc)
+	knowledgeDocHandler := knowledge.NewDocHandler(docSvc, chunkLogSvc)
 	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
 	// 7. 创建路由

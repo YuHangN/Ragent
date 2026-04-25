@@ -34,6 +34,7 @@ func RegisterRoutes(
 	doc.DELETE("/:doc-id", docH.DeleteDoc)
 	doc.POST("/:doc-id/chunk", docH.StartChunk)
 	doc.PATCH("/:doc-id/enable", docH.EnableDoc)
+	doc.GET("/:doc-id/chunk-logs", docH.GetChunkLogs)
 
 	// Chunk 管理
 	chunk := rg.Group("/knowledge-base/docs/:doc-id/chunks", auth)

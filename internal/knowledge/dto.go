@@ -73,6 +73,12 @@ type ChunkBatchRequest struct {
 	IDs []int64 `json:"ids"`
 }
 
+// ChunkLogPageRequest 对应文档分块日志分页查询参数。
+type ChunkLogPageRequest struct {
+	PageNo   int `form:"pageNo,default=1"`
+	PageSize int `form:"pageSize,default=10"`
+}
+
 // ──────────────────────── Search VO ────────────────────────
 
 type KnowledgeDocumentSearchVO struct {

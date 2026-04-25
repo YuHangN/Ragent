@@ -13,11 +13,12 @@ import (
 
 // DocHandler 对应 Java KnowledgeDocumentController。
 type DocHandler struct {
-	svc *DocService
+	svc      *DocService
+	chunkLog *ChunkLogService
 }
 
-func NewDocHandler(svc *DocService) *DocHandler {
-	return &DocHandler{svc: svc}
+func NewDocHandler(svc *DocService, chunkLog *ChunkLogService) *DocHandler {
+	return &DocHandler{svc: svc, chunkLog: chunkLog}
 }
 
 // UploadDoc POST /knowledge-base/:kb-id/docs/upload
@@ -152,4 +153,20 @@ func (h *DocHandler) EnableDoc(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success[any](nil))
+}
+
+func (h *DocHandler) GetChunkLogs(c *gin.Context) {
+	docID := c.Param("doc-id")
+	var req ChunkLogPageRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
+		return
+	}
+
+	result, err := h.chunkLog.Page(docID, req.PageNo, req.PageSize)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(result))
 }

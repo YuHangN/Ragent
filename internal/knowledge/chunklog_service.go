@@ -33,18 +33,21 @@ func (s *ChunkLogService) StartLog(docID int64, processMode, chunkStrategy strin
 	return l.ID, nil
 }
 
-// FinishSuccess 在分块完成时把记录更新为 success，带耗时和 chunkCount。
-func (s *ChunkLogService) FinishSuccess(
+func (s *ChunkLogService) FinishSuccess(logID int64, chunkCount int, totalMs int64) error {
+	return s.finish(logID, string(ScheduleSuccess), chunkCount, "", 0, 0, 0, totalMs)
+}
+
+func (s *ChunkLogService) FinishSuccessDetailed(
 	logID int64,
 	chunkCount int,
 	extractMs, chunkMs, embeddingMs int64,
 ) error {
-	return s.finish(logID, string(ScheduleSuccess), chunkCount, "", extractMs, chunkMs, embeddingMs)
+	total := extractMs + chunkMs + embeddingMs
+	return s.finish(logID, string(ScheduleSuccess), chunkCount, "", extractMs, chunkMs, embeddingMs, total)
 }
 
-// FinishFailed 在分块失败时更新为 failed，记录 errorMessage。
-func (s *ChunkLogService) FinishFailed(logID int64, errMsg string) error {
-	return s.finish(logID, string(ScheduleFailed), 0, errMsg, 0, 0, 0)
+func (s *ChunkLogService) FinishFailed(logID int64, errMsg string, totalMs int64) error {
+	return s.finish(logID, string(ScheduleFailed), 0, errMsg, 0, 0, 0, totalMs)
 }
 
 func (s *ChunkLogService) finish(
@@ -52,8 +55,9 @@ func (s *ChunkLogService) finish(
 	status string,
 	chunkCount int,
 	errMsg string,
-	extractMs, chunkMs, embeddingMs int64,
+	extractMs, chunkMs, embeddingMs, totalMs int64,
 ) error {
+	// 直接 update by id，不 select 再 save，减少一次查询
 	l := &KnowledgeDocumentChunkLog{
 		ID:                logID,
 		Status:            status,
@@ -62,18 +66,16 @@ func (s *ChunkLogService) finish(
 		ExtractDuration:   extractMs,
 		ChunkDuration:     chunkMs,
 		EmbeddingDuration: embeddingMs,
-		TotalDuration:     extractMs + chunkMs + embeddingMs,
+		TotalDuration:     totalMs, // 调用方显式传入，不再从 parts 求和
 	}
 	end := time.Now()
 	l.EndTime = &end
-
 	if err := s.repo.Update(l); err != nil {
 		return apperror.NewServiceWrap("更新分块日志失败", err, nil)
 	}
 	return nil
 }
 
-// Page 分页查询某个文档的日志，按 start_time DESC。
 func (s *ChunkLogService) Page(docIDStr string, page, size int) (*response.PageResult[KnowledgeDocumentChunkLogVO], error) {
 	docID, err := parseID(docIDStr)
 	if err != nil {
@@ -85,7 +87,6 @@ func (s *ChunkLogService) Page(docIDStr string, page, size int) (*response.PageR
 	if size <= 0 || size > 100 {
 		size = 10
 	}
-
 	logs, total, err := s.repo.PageByDocID(docID, page, size)
 	if err != nil {
 		return nil, apperror.NewServiceWrap("查询失败", err, nil)

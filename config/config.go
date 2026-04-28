@@ -82,9 +82,16 @@ type ModelCandidate struct {
 	ID               string `mapstructure:"id"`
 	Provider         string `mapstructure:"provider"`
 	Model            string `mapstructure:"model"`
+	URL              string `mapstructure:"url"`     // 可选：覆盖 provider.URL
+	Enabled          *bool  `mapstructure:"enabled"` // 可选：nil 默认启用，false 显式禁用
 	SupportsThinking bool   `mapstructure:"supports-thinking"`
 	Priority         int    `mapstructure:"priority"`
 	Dimension        int    `mapstructure:"dimension"` // embedding 专用
+}
+
+// IsEnabled 返回候选是否启用。Enabled=nil 视为启用（向后兼容）。
+func (c ModelCandidate) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 type ChatModelConfig struct {

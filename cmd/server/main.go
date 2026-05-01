@@ -35,20 +35,42 @@ func main() {
 	milvusClient := vector.NewMilvus(&cfg.Milvus)
 
 	// 4. 初始化 AI 客户端
-	embeddingService, err := aiclient.NewEmbeddingService(&cfg.AI)
-	if err != nil {
-		zap.S().Fatalf("init embedding service: %v", err)
+	selectionCfg := cfg.AI.Selection.Defaults()
+	healthStore := aiclient.NewHealthStore(
+		selectionCfg.FailureThreshold,
+		time.Duration(selectionCfg.OpenDurationMs)*time.Millisecond,
+	)
+
+	chatClients := []aiclient.ChatClient{
+		aiclient.NewOpenAIChatClient().WithProvider(aiclient.ProviderOpenAI),
+		aiclient.NewOpenAIChatClient().WithProvider(aiclient.ProviderOllama),
 	}
-	llmService, err := aiclient.NewLLMService(&cfg.AI)
+	llmService, err := aiclient.NewLLMService(&cfg.AI, healthStore, chatClients)
 	if err != nil {
 		zap.S().Fatalf("init llm service: %v", err)
 	}
-	rerankService, err := aiclient.NewRerankService(&cfg.AI)
+
+	embedClients := []aiclient.EmbeddingClient{
+		aiclient.NewOpenAIEmbeddingClient().WithProvider(aiclient.ProviderOpenAI),
+		aiclient.NewOpenAIEmbeddingClient().WithProvider(aiclient.ProviderOllama),
+	}
+	embeddingService, err := aiclient.NewEmbeddingService(&cfg.AI, healthStore, embedClients)
+	if err != nil {
+		zap.S().Fatalf("init embedding service: %v", err)
+	}
+
+	rerankClients := []aiclient.RerankClient{
+		aiclient.NewCohereRerankClient().WithProvider(aiclient.ProviderCohere),
+		aiclient.NewNoopRerankClient(),
+	}
+	rerankService, err := aiclient.NewRerankService(&cfg.AI, healthStore, rerankClients)
 	if err != nil {
 		zap.S().Fatalf("init rerank service: %v", err)
 	}
-	_ = llmService    // Phase 6 RAG core
-	_ = rerankService // Phase 6 RAG retrieval
+
+	// llm / rerank 在 Phase 6/7 RAG 模块接入；此处提前构造以暴露启动期配置错误
+	_ = llmService
+	_ = rerankService
 
 	// 5. 初始化用户模块
 	userRepo := user.NewUserRepo(gormDB)

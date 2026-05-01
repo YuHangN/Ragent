@@ -74,6 +74,16 @@ type SelectionConfig struct {
 	OpenDurationMs   int64 `mapstructure:"open-duration-ms"`
 }
 
+func (s SelectionConfig) Defaults() SelectionConfig {
+	if s.FailureThreshold <= 0 {
+		s.FailureThreshold = 3
+	}
+	if s.OpenDurationMs <= 0 {
+		s.OpenDurationMs = 30000
+	}
+	return s
+}
+
 // ModelCandidate 表示一个候选模型。
 // 注意：这个结构体是复用的，所以 chat / embedding / rerank 都能共用。
 // SupportsThinking 主要给 chat 模型用。

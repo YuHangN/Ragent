@@ -1,193 +1,86 @@
 package aiclient
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
 
 	"github.com/YuHangN/ragent-go/config"
 )
 
+// LLMService 业务侧使用的 LLM 入口。接口保持稳定，实现从单候选升级为路由 + fallback。
 type LLMService interface {
 	Chat(ctx context.Context, req ChatRequest) (string, error)
 	StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback) error
 }
 
-type httpLLMService struct {
-	apiURL string
-	apiKey string
-	model  string
-	client *http.Client
+// routingLLMService 路由式实现。对齐 Java RoutingLLMService。
+type routingLLMService struct {
+	selector         *Selector
+	healthStore      *HealthStore
+	clientByProvider map[Provider]ChatClient
 }
 
-func NewLLMService(cfg *config.AIConfig) (LLMService, error) {
-	candidate, provider, err := resolveDefault(
-		cfg.Chat.DefaultModel,
-		cfg.Chat.Candidates,
-		cfg.Providers,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("llm: %w", err)
+// NewLLMService 构造路由 LLM Service。clients 列表里每个 client 的 Provider() 用作路由 key。
+func NewLLMService(cfg *config.AIConfig, hs *HealthStore, clients []ChatClient) (LLMService, error) {
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("llm: at least one ChatClient required")
 	}
-	apiURL := resolveEndpoint(provider, "chat", "/v1/chat/completions")
-	return &httpLLMService{
-		apiURL: apiURL,
-		apiKey: provider.APIKey,
-		model:  candidate.Model,
-		client: &http.Client{Timeout: 120 * time.Second},
+	clientMap := make(map[Provider]ChatClient, len(clients))
+	for _, c := range clients {
+		clientMap[c.Provider()] = c
+	}
+	return &routingLLMService{
+		selector:         NewSelector(cfg, hs),
+		healthStore:      hs,
+		clientByProvider: clientMap,
 	}, nil
 }
 
-// ── request / response types ─────────────────────────────────────
-
-type chatCompletionRequest struct {
-	Model          string        `json:"model"`
-	Messages       []ChatMessage `json:"messages"`
-	Stream         bool          `json:"stream,omitempty"`
-	Temperature    *float64      `json:"temperature,omitempty"`
-	TopP           *float64      `json:"top_p,omitempty"`
-	MaxTokens      *int          `json:"max_tokens,omitempty"`
-	EnableThinking bool          `json:"enable_thinking,omitempty"`
+func (s *routingLLMService) Chat(ctx context.Context, req ChatRequest) (string, error) {
+	targets := s.selector.SelectChatCandidates(req.Thinking)
+	return ExecuteWithFallback(
+		s.healthStore,
+		CapabilityChat,
+		targets,
+		func(t *ModelTarget) ChatClient {
+			return s.clientByProvider[Provider(t.Candidate.Provider)]
+		},
+		func(c ChatClient, t *ModelTarget) (string, error) {
+			return c.Chat(ctx, req, t)
+		},
+	)
 }
 
-type chatCompletionResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Error *apiError `json:"error,omitempty"`
-}
-
-// ── sync chat ────────────────────────────────────────────────────
-
-func (s *httpLLMService) Chat(ctx context.Context, req ChatRequest) (string, error) {
-	// 构造请求体
-	body, _ := json.Marshal(s.buildReqBody(req, false))
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("llm build request: %w", err)
+func (s *routingLLMService) StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback) error {
+	targets := s.selector.SelectChatCandidates(req.Thinking)
+	// 流式不能用泛型 ExecuteWithFallback —— 没法回放回调。
+	// 简化：第一个 client 失败就调 cb.OnError 且返回错误；不做 Phase 7 的 ProbeBufferingCallback。
+	if len(targets) == 0 {
+		err := fmt.Errorf("no Chat candidates available")
+		cb.OnError(err)
+		return err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
-
-	// 发送请求
-	resp, err := s.client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("llm HTTP: %w", err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm HTTP %d: %s", resp.StatusCode, data)
-	}
-
-	// 解析响应
-	var result chatCompletionResponse
-	if err := json.Unmarshal(data, &result); err != nil {
-		return "", fmt.Errorf("llm parse: %w", err)
-	}
-	if result.Error != nil {
-		return "", fmt.Errorf("llm API error %s: %s", result.Error.Code, result.Error.Message)
-	}
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("llm: empty choices in response")
-	}
-
-	return result.Choices[0].Message.Content, nil
-}
-
-// ── stream chat ──────────────────────────────────────────────────
-
-func (s *httpLLMService) StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback) error {
-	body, _ := json.Marshal(s.buildReqBody(req, true))
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("llm stream build: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
-
-	resp, err := s.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("llm stream HTTP: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("llm stream HTTP %d: %s", resp.StatusCode, data)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	for i := range targets {
+		target := &targets[i]
+		client := s.clientByProvider[Provider(target.Candidate.Provider)]
+		if client == nil {
 			continue
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			cb.OnComplete()
-			return nil
+		if !s.healthStore.AllowCall(target.ID) {
+			continue
 		}
-		parseSseDelta(payload, cb)
+		err := client.StreamChat(ctx, req, cb, target)
+		if err != nil {
+			s.healthStore.MarkFailure(target.ID)
+			// 流式 fallback 在 Phase 7 RAG Chat 用 ProbeBufferingCallback 时再做；
+			// 这里第一个失败就直接报错，对齐 Phase 4 单候选的现有行为。
+			cb.OnError(err)
+			return err
+		}
+		s.healthStore.MarkSuccess(target.ID)
+		return nil
 	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("llm stream read: %w", err)
-	}
-	cb.OnComplete()
-	return nil
-}
-
-// sseDelta is one streaming chunk from /v1/chat/completions with stream=true.
-type sseDelta struct {
-	Choices []struct {
-		Delta struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"` // DeepSeek / thinking models
-		} `json:"delta"`
-		FinishReason *string `json:"finish_reason"`
-	} `json:"choices"`
-}
-
-func parseSseDelta(payload string, cb StreamCallback) {
-	var chunk sseDelta
-	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-		return // malformed chunk — skip silently (Java also uses log.warn + continue)
-	}
-
-	if len(chunk.Choices) == 0 {
-		return
-	}
-	d := chunk.Choices[0].Delta
-	if d.Content != "" {
-		cb.OnContent(d.Content)
-	}
-	if d.ReasoningContent != "" {
-		cb.OnThinking(d.ReasoningContent)
-	}
-}
-
-func (s *httpLLMService) buildReqBody(req ChatRequest, stream bool) chatCompletionRequest {
-	return chatCompletionRequest{
-		Model:          s.model,
-		Messages:       req.Messages,
-		Stream:         stream,
-		Temperature:    req.Temperature,
-		TopP:           req.TopP,
-		MaxTokens:      req.MaxTokens,
-		EnableThinking: req.Thinking,
-	}
+	err := fmt.Errorf("no available Chat client")
+	cb.OnError(err)
+	return err
 }

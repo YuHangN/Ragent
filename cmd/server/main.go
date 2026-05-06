@@ -72,6 +72,8 @@ func main() {
 	_ = llmService
 	_ = rerankService
 
+	tokenCounter := aiclient.NewHeuristicTokenCounter()
+
 	// 5. 初始化用户模块
 	userRepo := user.NewUserRepo(gormDB)
 	userSvc := user.NewUserService(userRepo)
@@ -91,7 +93,7 @@ func main() {
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, scheduleSvc)
-	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo)
+	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo, tokenCounter)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
 
 	// 8. Ingestion pipeline（Phase 5）
@@ -107,6 +109,7 @@ func main() {
 			Overlap:         128,
 		},
 		chunkLogSvc,
+		tokenCounter,
 	)
 
 	// 9. Wire 跨模块依赖（必须在 schedule job 启动前完成，避免 race）

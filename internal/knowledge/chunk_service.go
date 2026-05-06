@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/YuHangN/ragent-go/pkg/aiclient"
 	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/YuHangN/ragent-go/pkg/response"
 )
@@ -13,10 +14,11 @@ import (
 type ChunkService struct {
 	chunkRepo ChunkRepo
 	docRepo   DocRepo
+	tokens    aiclient.TokenCounter
 }
 
-func NewChunkService(chunkRepo ChunkRepo, docRepo DocRepo) *ChunkService {
-	return &ChunkService{chunkRepo: chunkRepo, docRepo: docRepo}
+func NewChunkService(chunkRepo ChunkRepo, docRepo DocRepo, tokens aiclient.TokenCounter) *ChunkService {
+	return &ChunkService{chunkRepo: chunkRepo, docRepo: docRepo, tokens: tokens}
 }
 
 // Page 分页查询 Chunk，enabled 为 nil 时不过滤。
@@ -66,6 +68,7 @@ func (s *ChunkService) Create(docIDStr, content, operator string) (*KnowledgeChu
 		Content:     content,
 		ContentHash: hashContent(content),
 		CharCount:   len([]rune(content)), // rune 正确统计 Unicode 字符数
+		TokenCount:  s.tokens.Count(content),
 		Enabled:     1,
 		CreatedBy:   operator,
 		UpdatedBy:   operator,
@@ -94,6 +97,7 @@ func (s *ChunkService) Update(docIDStr, chunkIDStr, content, operator string) er
 	chunk.Content = content
 	chunk.ContentHash = hashContent(content)
 	chunk.CharCount = len([]rune(content))
+	chunk.TokenCount = s.tokens.Count(content)
 	chunk.UpdatedBy = operator
 
 	return s.chunkRepo.Update(chunk)

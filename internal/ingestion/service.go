@@ -24,6 +24,7 @@ type IngestionService struct {
 	chunkSize int
 	overlap   int
 	chunkLog  *knowledge.ChunkLogService
+	tokens    aiclient.TokenCounter
 }
 
 type IngestionServiceConfig struct {
@@ -40,6 +41,7 @@ func NewIngestionService(
 	chunkRepo knowledge.ChunkRepo,
 	cfg IngestionServiceConfig,
 	chunkLog *knowledge.ChunkLogService,
+	tokens aiclient.TokenCounter,
 ) *IngestionService {
 	if cfg.ChunkerStrategy == nil {
 		cfg.ChunkerStrategy = FixedSizeChunker{}
@@ -61,6 +63,7 @@ func NewIngestionService(
 		chunkSize: cfg.ChunkSize,
 		overlap:   cfg.Overlap,
 		chunkLog:  chunkLog,
+		tokens:    tokens,
 	}
 }
 
@@ -135,6 +138,7 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 				Content:     vc.Content,
 				ContentHash: hashContent(vc.Content),
 				CharCount:   len([]rune(vc.Content)),
+				TokenCount:  s.tokens.Count(vc.Content),
 				Enabled:     1,
 			}); err != nil {
 				runErr = fmt.Errorf("ingestion: save chunk: %w", err)

@@ -20,6 +20,13 @@ services:
     volumes:
       - ragent-redis-data:/data
 
+  tika:
+    image: apache/tika:latest-full
+    container_name: ragent-tika
+    ports:
+      - "9998:9998"
+    restart: unless-stopped
+
 volumes:
   ragent-mysql-data:
   ragent-redis-data:

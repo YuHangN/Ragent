@@ -54,10 +54,7 @@ func (s *QueryRewriteService) Rewrite(ctx context.Context, question string, hist
 	}
 
 	// LLM 有时会在 JSON 外包裹 markdown code block，先清理
-	cleaned := strings.TrimSpace(resp)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned := aiclient.StripMarkdownCodeFence(resp)
 
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return fallback, nil

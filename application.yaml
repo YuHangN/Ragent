@@ -99,3 +99,17 @@ rag:
       lock-seconds: 900
       batch-size: 20
       max-file-size-bytes: 104857600
+
+ingestion:
+  tika:
+    url: "http://localhost:9998/tika"
+    timeout-seconds: 60
+  feishu:
+    app-id: ""
+    app-secret: ""
+  http:
+    timeout-seconds: 30
+    max-body-mb: 50
+  local:
+    allowed-roots:
+      - "/tmp/ragent-uploads"

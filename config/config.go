@@ -4,14 +4,15 @@ package config
 // Config 是整个 application.yaml 的总映射入口。
 // 你可以理解成：程序启动后，所有配置最终都会落到这个结构体里。
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	DB     DBConfig     `mapstructure:"db"`
-	Redis  RedisConfig  `mapstructure:"redis"`
-	Milvus MilvusConfig `mapstructure:"milvus"`
-	RustFS RustFSConfig `mapstructure:"rustfs"`
-	AI     AIConfig     `mapstructure:"ai"`
-	RAG    RAGConfig    `mapstructure:"rag"`
-	App    AppConfig    `mapstructure:"app"`
+	Server    ServerConfig    `mapstructure:"server"`
+	DB        DBConfig        `mapstructure:"db"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Milvus    MilvusConfig    `mapstructure:"milvus"`
+	RustFS    RustFSConfig    `mapstructure:"rustfs"`
+	AI        AIConfig        `mapstructure:"ai"`
+	RAG       RAGConfig       `mapstructure:"rag"`
+	App       AppConfig       `mapstructure:"app"`
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
 }
 
 // ── 基础设施配置 ─────────────────────────────────────────

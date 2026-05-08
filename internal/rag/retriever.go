@@ -92,6 +92,5 @@ func parseSearchResults(results []milvusclient.SearchResult, collectionName stri
 		}
 		chunks = append(chunks, chunk)
 	}
-
 	return chunks
 }

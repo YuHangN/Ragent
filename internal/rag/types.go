@@ -6,21 +6,38 @@ import (
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
 
+// ──── 意图 ────────────────────────────────────────────────
+
 type IntentKind string
 
 const (
-	IntentKindRoot   IntentKind = "ROOT"
-	IntentKindBranch IntentKind = "BRANCH"
-	IntentKindLeaf   IntentKind = "LEAF"
+	IntentKindKB     IntentKind = "KB"     // 走 RAG 检索
+	IntentKindSystem IntentKind = "SYSTEM" // 系统交互（不检索）
+	IntentKindMCP    IntentKind = "MCP"    // 调外部工具（Phase 10）
 )
 
-// IntentCandidate 是 LLM 意图分类后的单条打分结果（仅 LEAF 节点）。
+// IntentCandidate 增加 Kind 字段：
 type IntentCandidate struct {
 	NodeID         int64
 	NodeName       string
 	KbID           int64
-	CollectionName string
-	Score          float64 // 0.0–1.0
+	Kind           IntentKind // 新增
+	CollectionName string     // KB 类型生效；MCP/SYSTEM 留空
+	MCPToolID      string     // 新增（MCP 类型生效，Phase 10 用）
+	Score          float64    // 0.0–1.0
+}
+
+// SubQuestionIntent 单子问题的意图分类结果
+type SubQuestionIntent struct {
+	SubQuestion string
+	Candidates  []IntentCandidate
+}
+
+// IntentGroup 合并所有子问题后的意图分组
+type IntentGroup struct {
+	KbIntents  []IntentCandidate // Kind=KB 的所有候选
+	McpIntents []IntentCandidate // Kind=MCP 的所有候选
+	HasSystem  bool              // 是否命中 SYSTEM 意图（用于跳过检索）
 }
 
 // ──── 查询改写 ────────────────────────────────────────────
@@ -45,11 +62,11 @@ type RetrievedChunk struct {
 
 // SearchContext 是传递给检索引擎的完整上下文。
 type SearchContext struct {
-	KbIDs        []int64           // 要搜索的知识库 ID 列表（空=全部）
-	Question     string            // 改写后的主问题
-	SubQuestions []string          // 子问题列表
-	Intents      []IntentCandidate // 意图分类结果
-	TopK         int               // 最终返回的 chunk 数量
+	KbIDs        []int64
+	Question     string
+	SubQuestions []string
+	IntentGroup  IntentGroup // 替换原 Intents 字段（KB/MCP 分流后的结果）
+	TopK         int
 }
 
 // SearchChannelResult 是单个检索通道的输出。
@@ -62,6 +79,8 @@ type SearchChannelResult struct {
 
 // ──── 接口 ────────────────────────────────────────────────
 
+// SearchChannel 是检索通道接口。
+// 对应 Java：SearchChannel 接口
 type SearchChannel interface {
 	Name() string
 	Priority() int // 数值越小优先级越高
@@ -70,6 +89,7 @@ type SearchChannel interface {
 }
 
 // PostProcessor 是检索后处理接口。
+// 对应 Java：SearchResultPostProcessor 接口
 type PostProcessor interface {
 	Order() int // 数值越小越先执行
 	Process(chunks []RetrievedChunk, results []SearchChannelResult, sc SearchContext) []RetrievedChunk

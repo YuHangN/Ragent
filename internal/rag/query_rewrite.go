@@ -28,7 +28,6 @@ func NewQueryRewriteService(llm aiclient.LLMService, cfg config.QueryRewriteConf
 
 // Rewrite 改写问题并拆分子问题。若配置禁用改写，直接返回原问题。
 func (s *QueryRewriteService) Rewrite(ctx context.Context, question string, history []aiclient.ChatMessage) (RewriteResult, error) {
-	// 如果改写功能未启用，直接返回原问题作为改写结果和唯一子问题。
 	fallback := RewriteResult{
 		RewrittenQuery: question,
 		SubQuestions:   []string{question},
@@ -40,7 +39,9 @@ func (s *QueryRewriteService) Rewrite(ctx context.Context, question string, hist
 
 	// 截取历史消息，避免 token 过长
 	history = trimHistory(history, s.config.MaxHistoryMessages, s.config.MaxHistoryChars)
+
 	prompt := strings.ReplaceAll(rewritePromptTemplate, "{{question}}", question)
+
 	messages := append(history, aiclient.User(prompt))
 	resp, err := s.llm.Chat(ctx, aiclient.ChatRequest{Messages: messages})
 	if err != nil {
@@ -53,13 +54,10 @@ func (s *QueryRewriteService) Rewrite(ctx context.Context, question string, hist
 		SubQuestions []string `json:"sub_questions"`
 	}
 
-	// LLM 有时会在 JSON 外包裹 markdown code block，先清理
 	cleaned := aiclient.StripMarkdownCodeFence(resp)
-
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return fallback, nil
 	}
-
 	if result.Rewritten == "" {
 		result.Rewritten = question
 	}

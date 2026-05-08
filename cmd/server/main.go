@@ -12,6 +12,8 @@ import (
 	"github.com/YuHangN/ragent-go/infra/storage"
 	"github.com/YuHangN/ragent-go/infra/vector"
 	"github.com/YuHangN/ragent-go/internal/ingestion"
+	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
+	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
@@ -89,16 +91,27 @@ func main() {
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
 
 	// 7. 知识库模块：Services
-	fetcher := knowledge.NewHTTPFetcher()
+	httpFetcher := knowledge.NewHTTPFetcher(s3Client)
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
-	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, scheduleSvc)
+	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, httpFetcher, scheduleSvc)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo, tokenCounter)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
 
-	// 8. Ingestion pipeline（Phase 5）
+	// 8. Phase 5.5a: parser selector（多 parser）+ S3 fetcher（唯一 fetcher）
+	parserSel := parser.NewDocumentParserSelector([]parser.DocumentParser{
+		parser.NewTextDocumentParser(),
+		parser.NewMarkdownDocumentParser(),
+		parser.NewHtmlDocumentParser(),
+		parser.NewTikaDocumentParser(cfg.Ingestion.Tika.URL, cfg.Ingestion.Tika.Timeout()),
+	})
+
+	s3Fetcher := fetcher.NewS3Fetcher(s3Client)
+
+	// 9. Ingestion pipeline（Phase 5）
 	ingestionSvc := ingestion.NewIngestionService(
-		s3Client,
+		parserSel,
+		s3Fetcher,
 		milvusClient,
 		embeddingService,
 		docRepo,
@@ -121,15 +134,12 @@ func main() {
 	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
 	// 11. 启动后台 schedule job（依赖已全部就绪）
-	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(ctx context.Context, docID int64, body []byte, fileName, contentType string) error {
-		zap.L().Info("schedule process doc",
-			zap.Int64("docID", docID),
-			zap.String("fileName", fileName),
-			zap.Int("bodySize", len(body)))
+	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(_ context.Context, docID int64) error {
+		zap.L().Info("schedule process doc", zap.Int64("docID", docID))
 		return docSvc.StartChunk(fmt.Sprintf("%d", docID))
 	})
 
-	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, fetcher, scheduleProc, knowledge.ScheduleJobConfig{
+	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, kbRepo, httpFetcher, scheduleProc, knowledge.ScheduleJobConfig{
 		Owner:        fmt.Sprintf("ragent-go-%s-%d", hostname(), time.Now().UnixNano()),
 		LockSeconds:  cfg.RAG.Knowledge.Schedule.LockSeconds,
 		MaxFileBytes: cfg.RAG.Knowledge.Schedule.MaxFileSizeBytes,

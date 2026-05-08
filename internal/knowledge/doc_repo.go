@@ -14,6 +14,7 @@ type DocRepo interface {
 	Search(keyword string, limit int) ([]KnowledgeDocument, error)
 	UpdateStatus(id int64, status string) error
 	UpdateChunkCount(id int64, delta int) error
+	UpdateSourceLocation(id int64, location string) error
 }
 
 type gormDocRepo struct{ db *gorm.DB }
@@ -85,4 +86,10 @@ func (r *gormDocRepo) UpdateStatus(id int64, status string) error {
 func (r *gormDocRepo) UpdateChunkCount(id int64, delta int) error {
 	return r.db.Model(&KnowledgeDocument{}).Where("id = ?", id).
 		UpdateColumn("chunk_count", gorm.Expr("chunk_count + ?", delta)).Error
+}
+
+// UpdateSourceLocation 更新文档的 S3 路径（schedule job 重抓后调用）。
+func (r *gormDocRepo) UpdateSourceLocation(id int64, location string) error {
+	return r.db.Model(&KnowledgeDocument{}).Where("id = ?", id).
+		Update("source_location", location).Error
 }

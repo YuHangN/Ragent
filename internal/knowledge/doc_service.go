@@ -26,12 +26,13 @@ type DocService struct {
 	kbRepo         KBRepo
 	chunkRepo      ChunkRepo
 	s3             *s3.Client
+	httpFetcher    *HTTPFetcher
 	chunkProcessor ChunkProcessor // Phase 5 注入
 	schedule       *ScheduleService
 }
 
-func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, scheduleSvc *ScheduleService) *DocService {
-	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, schedule: scheduleSvc}
+func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, httpFetcher *HTTPFetcher, scheduleSvc *ScheduleService) *DocService {
+	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, httpFetcher: httpFetcher, schedule: scheduleSvc}
 }
 
 // SetChunkProcessor Phase 5 完成后由 main.go 调用注入实际处理器。
@@ -65,21 +66,42 @@ func (s *DocService) Upload(
 		return nil, errors.New("来源地址不能为空")
 	}
 
-	var fileURL, fileType string
+	// Phase 5.5a 统一 S3 架构：本地上传 / URL 来源都把字节 PUT 到 S3，
+	// doc.SourceLocation 永远是 s3://bucket/key 格式；URL 来源额外记录原 URL 到 OriginURL。
+	var (
+		fileType  string
+		s3Path    string // s3://bucket/key
+		originURL string
+	)
 	if file != nil {
-		// 上传文件到 S3，路径格式：docs/<kbID>/<name>_<timestamp>.<ext>
+		// 本地上传：直接 PUT S3。
 		ext := filepath.Ext(fileName)
 		fileType = strings.TrimPrefix(strings.ToLower(ext), ".")
 		objectKey := fmt.Sprintf("docs/%d/%s_%d%s",
-			kbID,
-			strings.TrimSuffix(fileName, ext),
-			time.Now().UnixMilli(),
-			ext,
-		)
+			kbID, strings.TrimSuffix(fileName, ext), time.Now().UnixMilli(), ext)
 		if err := s.uploadToS3(kb.CollectionName, objectKey, file); err != nil {
 			return nil, err
 		}
-		fileURL = objectKey
+		s3Path = fmt.Sprintf("s3://%s/%s", kb.CollectionName, objectKey)
+	} else if sourceType == SourceTypeURL.String() {
+		// URL 来源：下载 + PUT S3，sourceLocation 改写为 s3:// 路径。
+		url := strings.TrimSpace(sourceLocation)
+		originURL = url
+		if fileName == "" || fileName == url {
+			fileName = lastPathSegment(url)
+		}
+		ext := filepath.Ext(fileName)
+		fileType = strings.TrimPrefix(strings.ToLower(ext), ".")
+		objectKey := fmt.Sprintf("docs/%d/%s_%d%s",
+			kbID, strings.TrimSuffix(fileName, ext), time.Now().UnixMilli(), ext)
+
+		result, sp, err := s.httpFetcher.DownloadAndUploadToS3(
+			context.Background(), url, kb.CollectionName, objectKey, 50*1024*1024)
+		if err != nil {
+			return nil, err
+		}
+		fileSize = int64(len(result.Body))
+		s3Path = sp
 	}
 
 	if processMode == "" {
@@ -90,12 +112,12 @@ func (s *DocService) Upload(
 		KbID:            kbID,
 		DocName:         fileName,
 		SourceType:      sourceType,
-		SourceLocation:  strings.TrimSpace(sourceLocation),
+		SourceLocation:  s3Path, // 永远是 s3://bucket/key
+		OriginURL:       originURL,
 		ScheduleEnabled: boolToInt(scheduleEnabled),
 		ScheduleCron:    scheduleCron,
 		Enabled:         1,
 		ChunkCount:      0,
-		FileURL:         fileURL,
 		FileType:        fileType,
 		FileSize:        fileSize,
 		ProcessMode:     processMode,
@@ -252,6 +274,18 @@ func (s *DocService) Search(keyword string, limit int) ([]KnowledgeDocumentVO, e
 	return result, nil
 }
 
+// lastPathSegment 从 URL 的最后一段路径推文件名。
+func lastPathSegment(url string) string {
+	if idx := strings.LastIndex(url, "/"); idx >= 0 && idx < len(url)-1 {
+		name := url[idx+1:]
+		if q := strings.Index(name, "?"); q >= 0 {
+			name = name[:q]
+		}
+		return name
+	}
+	return url
+}
+
 func (s *DocService) uploadToS3(bucket, key string, body io.Reader) error {
 	_, err := s.s3.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
@@ -268,11 +302,11 @@ func toDocVO(d KnowledgeDocument) *KnowledgeDocumentVO {
 		DocName:         d.DocName,
 		SourceType:      d.SourceType,
 		SourceLocation:  d.SourceLocation,
+		OriginURL:       d.OriginURL,
 		ScheduleEnabled: d.ScheduleEnabled == 1,
 		ScheduleCron:    d.ScheduleCron,
 		Enabled:         d.Enabled == 1,
 		ChunkCount:      d.ChunkCount,
-		FileURL:         d.FileURL,
 		FileType:        d.FileType,
 		FileSize:        d.FileSize,
 		ProcessMode:     d.ProcessMode,

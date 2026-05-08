@@ -3,8 +3,8 @@ package ingestion
 type SourceType string
 
 const (
-	SourceTypeS3  SourceType = "s3"  // fetch from S3-compatible object store
-	SourceTypeRaw SourceType = "raw" // bytes already in RawBytes — skip fetch
+	SourceTypeS3  SourceType = "s3"
+	SourceTypeRaw SourceType = "raw" // 单元测试用，跳过 fetch
 )
 
 // DocumentSource describes where the raw document bytes come from.

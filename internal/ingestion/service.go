@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
+	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	milvusclient "github.com/milvus-io/milvus-sdk-go/v2/client"
 	"go.uber.org/zap"
 )
 
 // IngestionService is the public entry point for the ingestion pipeline.
 type IngestionService struct {
-	s3Client  *s3.Client
+	parserSel *parser.DocumentParserSelector
+	s3Fetcher *fetcher.S3Fetcher
 	milvus    milvusclient.Client
 	embedding aiclient.EmbeddingService
 	docRepo   knowledge.DocRepo
@@ -34,7 +36,8 @@ type IngestionServiceConfig struct {
 }
 
 func NewIngestionService(
-	s3Client *s3.Client,
+	parserSel *parser.DocumentParserSelector,
+	s3Fetcher *fetcher.S3Fetcher,
 	milvus milvusclient.Client,
 	embedding aiclient.EmbeddingService,
 	docRepo knowledge.DocRepo,
@@ -54,7 +57,8 @@ func NewIngestionService(
 	}
 
 	return &IngestionService{
-		s3Client:  s3Client,
+		parserSel: parserSel,
+		s3Fetcher: s3Fetcher,
 		milvus:    milvus,
 		embedding: embedding,
 		docRepo:   docRepo,
@@ -119,8 +123,8 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 
 	// 4. 构造并运行管道：fetcher → parser → chunker → embedder → indexer
 	pipeline := NewPipeline(
-		NewFetcherNode(s.s3Client),
-		NewParserNode(),
+		NewFetcherNode(s.s3Fetcher),
+		NewParserNode(s.parserSel),
 		NewChunkerNode(s.chunker, s.chunkSize, s.overlap),
 		NewEmbedderNode(s.embedding),
 		NewIndexerNode(s.milvus),

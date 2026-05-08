@@ -12,13 +12,13 @@ type KnowledgeDocument struct {
 	ID              int64          `gorm:"primaryKey"`
 	KbID            int64          `gorm:"column:kb_id;not null"`
 	DocName         string         `gorm:"column:doc_name"`
-	SourceType      string         `gorm:"column:source_type"` // file / url
-	SourceLocation  string         `gorm:"column:source_location"`
+	SourceType      string         `gorm:"column:source_type"`     // file / url
+	SourceLocation  string         `gorm:"column:source_location"` // 永远是 s3://bucket/key（统一 S3 架构）
+	OriginURL       string         `gorm:"column:origin_url"`      // URL 类型的原始 URL（schedule 重抓用）
 	ScheduleEnabled int            `gorm:"column:schedule_enabled;default:0"`
 	ScheduleCron    string         `gorm:"column:schedule_cron"`
 	Enabled         int            `gorm:"column:enabled;default:1"`
 	ChunkCount      int            `gorm:"column:chunk_count;default:0"`
-	FileURL         string         `gorm:"column:file_url"`
 	FileType        string         `gorm:"column:file_type"`
 	FileSize        int64          `gorm:"column:file_size"`
 	ProcessMode     string         `gorm:"column:process_mode"` // chunk / pipeline
@@ -49,11 +49,11 @@ type KnowledgeDocumentVO struct {
 	DocName         string    `json:"docName"`
 	SourceType      string    `json:"sourceType"`
 	SourceLocation  string    `json:"sourceLocation"`
+	OriginURL       string    `json:"originUrl,omitempty"`
 	ScheduleEnabled bool      `json:"scheduleEnabled"`
 	ScheduleCron    string    `json:"scheduleCron"`
 	Enabled         bool      `json:"enabled"`
 	ChunkCount      int       `json:"chunkCount"`
-	FileURL         string    `json:"fileUrl"`
 	FileType        string    `json:"fileType"`
 	FileSize        int64     `json:"fileSize"`
 	ProcessMode     string    `json:"processMode"`

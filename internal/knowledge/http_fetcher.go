@@ -1,6 +1,8 @@
 package knowledge
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -10,17 +12,22 @@ import (
 	"time"
 
 	"github.com/YuHangN/ragent-go/pkg/apperror"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // HTTPFetcher 对齐 Java HttpClientHelper，做 URL HEAD/GET + 文件名/ETag 提取。
+// Phase 5.5a: 增加 DownloadAndUploadToS3 把 URL 内容直接落到 S3。
 type HTTPFetcher struct {
 	client *http.Client
+	s3     *s3.Client
 }
 
-// NewHTTPFetcher 创建默认的 fetcher，超时 60s。
-func NewHTTPFetcher() *HTTPFetcher {
+// NewHTTPFetcher 创建默认的 fetcher，超时 60s。s3Client 用于 DownloadAndUploadToS3。
+func NewHTTPFetcher(s3Client *s3.Client) *HTTPFetcher {
 	return &HTTPFetcher{
 		client: &http.Client{Timeout: 60 * time.Second},
+		s3:     s3Client,
 	}
 }
 
@@ -105,6 +112,36 @@ func (f *HTTPFetcher) Get(url string, maxSize int64) (*GetResult, error) {
 		LastModified: resp.Header.Get("Last-Modified"),
 		ContentHash:  hash,
 	}, nil
+}
+
+// DownloadAndUploadToS3 下载 URL 内容并 PUT 到 S3。
+// 返回 GetResult（含 hash/ETag/LastModified，schedule 用来比对变更）+ s3:// 路径。
+// 调用方负责构造 objectKey（typically: docs/<kbID>/<filename>_<ts>.<ext>）。
+func (f *HTTPFetcher) DownloadAndUploadToS3(
+	ctx context.Context,
+	url string,
+	bucket string,
+	objectKey string,
+	maxSize int64,
+) (*GetResult, string, error) {
+	if f.s3 == nil {
+		return nil, "", apperror.NewServiceMsg("HTTPFetcher 未注入 s3 client")
+	}
+
+	result, err := f.Get(url, maxSize)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if _, err := f.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(result.Body),
+	}); err != nil {
+		return result, "", apperror.NewRemoteWrap("PUT S3 失败", err, nil)
+	}
+
+	return result, fmt.Sprintf("s3://%s/%s", bucket, objectKey), nil
 }
 
 // extractFilename 从 Content-Disposition 提取 filename；失败时从 URL 末尾推断。

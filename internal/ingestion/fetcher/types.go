@@ -7,10 +7,7 @@ import (
 type SourceType string
 
 const (
-	SourceS3     SourceType = "s3"
-	SourceLocal  SourceType = "local"
-	SourceHTTP   SourceType = "http"
-	SourceFeishu SourceType = "feishu"
+	SourceS3 SourceType = "s3"
 )
 
 type FetchRequest struct {

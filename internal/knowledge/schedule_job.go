@@ -2,20 +2,25 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 )
 
+// ScheduleDocProcessor 触发已下载并存好 S3 的文档进入 chunk pipeline。
+// 接口在 Phase 5.5a 简化：S3 由 schedule_job 自己管，下游只需要 docID。
 type ScheduleDocProcessor interface {
-	Process(ctx context.Context, docID int64, body []byte, fileName, contentType string) error
+	Process(ctx context.Context, docID int64) error
 }
 
 // ScheduleDocProcessorFunc 函数适配。
-type ScheduleDocProcessorFunc func(ctx context.Context, docID int64, body []byte, fileName, contentType string) error
+type ScheduleDocProcessorFunc func(ctx context.Context, docID int64) error
 
-func (f ScheduleDocProcessorFunc) Process(ctx context.Context, docID int64, body []byte, fileName, contentType string) error {
-	return f(ctx, docID, body, fileName, contentType)
+func (f ScheduleDocProcessorFunc) Process(ctx context.Context, docID int64) error {
+	return f(ctx, docID)
 }
 
 // ScheduleJobConfig 配置。
@@ -31,6 +36,7 @@ type ScheduleJobConfig struct {
 type ScheduleJob struct {
 	repo    ScheduleRepo
 	docRepo DocRepo
+	kbRepo  KBRepo
 	fetcher *HTTPFetcher
 	proc    ScheduleDocProcessor
 	cfg     ScheduleJobConfig
@@ -40,7 +46,7 @@ type ScheduleJob struct {
 }
 
 // NewScheduleJob 构造。
-func NewScheduleJob(repo ScheduleRepo, docRepo DocRepo, fetcher *HTTPFetcher, proc ScheduleDocProcessor, cfg ScheduleJobConfig) *ScheduleJob {
+func NewScheduleJob(repo ScheduleRepo, docRepo DocRepo, kbRepo KBRepo, fetcher *HTTPFetcher, proc ScheduleDocProcessor, cfg ScheduleJobConfig) *ScheduleJob {
 	if cfg.LockSeconds <= 0 {
 		cfg.LockSeconds = 900
 	}
@@ -50,7 +56,7 @@ func NewScheduleJob(repo ScheduleRepo, docRepo DocRepo, fetcher *HTTPFetcher, pr
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = 10 * time.Second
 	}
-	j := &ScheduleJob{repo: repo, docRepo: docRepo, fetcher: fetcher, proc: proc, cfg: cfg}
+	j := &ScheduleJob{repo: repo, docRepo: docRepo, kbRepo: kbRepo, fetcher: fetcher, proc: proc, cfg: cfg}
 	if docRepo != nil {
 		j.DocLookup = func(docID int64) (*KnowledgeDocument, error) { return docRepo.FindByID(docID) }
 	}
@@ -111,6 +117,13 @@ func (j *ScheduleJob) ProcessOne(ctx context.Context, scheduleID int64) {
 		return
 	}
 
+	// schedule 必须探测 OriginURL（原始 URL），不能用 SourceLocation（已是 s3:// 路径）
+	url := doc.OriginURL
+	if url == "" {
+		j.markSkipped(schedule, "文档缺少 origin_url，无法重抓", "")
+		return
+	}
+
 	startTime := time.Now()
 	exec := &KnowledgeDocumentScheduleExec{
 		ScheduleID: scheduleID,
@@ -122,23 +135,20 @@ func (j *ScheduleJob) ProcessOne(ctx context.Context, scheduleID int64) {
 	_ = j.repo.ExecCreate(exec)
 
 	// 1. HEAD 快速判断
-	head, headErr := j.fetcher.Head(doc.SourceLocation)
+	head, headErr := j.fetcher.Head(url)
 	if headErr == nil {
-		// ETag 没变，说明内容没变，不需要处理了。
 		if etag := head.ETag; etag != "" && etag == schedule.LastEtag {
 			j.markSkipped(schedule, "ETag 未变化", etag)
 			j.finishExec(exec, string(ScheduleSkipped), "ETag 未变化", startTime)
 			j.advanceNextRun(schedule, doc.ScheduleCron)
 			return
 		}
-		// Last-Modified 没变，说明内容没变，不需要处理了。
 		if lm := head.LastModified; lm != "" && lm == schedule.LastModified {
 			j.markSkipped(schedule, "Last-Modified 未变化", schedule.LastEtag)
 			j.finishExec(exec, string(ScheduleSkipped), "Last-Modified 未变化", startTime)
 			j.advanceNextRun(schedule, doc.ScheduleCron)
 			return
 		}
-		// 大小超过限制，不处理了。
 		if j.cfg.MaxFileBytes > 0 && head.ContentLength > j.cfg.MaxFileBytes {
 			j.markFailed(schedule, "远程文件过大")
 			j.finishExec(exec, string(ScheduleFailed), "远程文件过大", startTime)
@@ -146,8 +156,19 @@ func (j *ScheduleJob) ProcessOne(ctx context.Context, scheduleID int64) {
 		}
 	}
 
-	// 2. 全量 GET + hash
-	result, err := j.fetcher.Get(doc.SourceLocation, j.cfg.MaxFileBytes)
+	// 2. 全量下载并 PUT S3
+	kb, err := j.kbRepo.FindByID(doc.KbID)
+	if err != nil {
+		j.markFailed(schedule, "KB 不存在")
+		j.finishExec(exec, string(ScheduleFailed), "KB 不存在", startTime)
+		return
+	}
+	ext := filepath.Ext(doc.DocName)
+	objectKey := fmt.Sprintf("docs/%d/%s_%d%s",
+		doc.KbID, strings.TrimSuffix(doc.DocName, ext), time.Now().UnixMilli(), ext)
+
+	result, s3Path, err := j.fetcher.DownloadAndUploadToS3(
+		ctx, url, kb.CollectionName, objectKey, j.cfg.MaxFileBytes)
 	if err != nil {
 		j.markFailed(schedule, err.Error())
 		j.finishExec(exec, string(ScheduleFailed), err.Error(), startTime)
@@ -160,12 +181,13 @@ func (j *ScheduleJob) ProcessOne(ctx context.Context, scheduleID int64) {
 		return
 	}
 
-	// 3. 交给下游处理（上传 S3 + 重分块）
-	fileName := result.FileName
-	if fileName == "" {
-		fileName = doc.DocName
+	// 3. 更新 doc.SourceLocation 为新 S3 路径，触发重新分块
+	if err := j.docRepo.UpdateSourceLocation(doc.ID, s3Path); err != nil {
+		j.markFailed(schedule, err.Error())
+		j.finishExec(exec, string(ScheduleFailed), err.Error(), startTime)
+		return
 	}
-	if err := j.proc.Process(ctx, doc.ID, result.Body, fileName, result.ContentType); err != nil {
+	if err := j.proc.Process(ctx, doc.ID); err != nil {
 		j.markFailed(schedule, err.Error())
 		j.finishExec(exec, string(ScheduleFailed), err.Error(), startTime)
 		return
@@ -210,7 +232,7 @@ func (j *ScheduleJob) markFailed(s *KnowledgeDocumentSchedule, errMsg string) {
 	_ = j.repo.UpdateAfterRun(s)
 }
 
-func (j *ScheduleJob) finishExec(exec *KnowledgeDocumentScheduleExec, status, message string, startTime time.Time) {
+func (j *ScheduleJob) finishExec(exec *KnowledgeDocumentScheduleExec, status, message string, _ time.Time) {
 	end := time.Now()
 	exec.Status = status
 	exec.Message = truncate(message, 1024)

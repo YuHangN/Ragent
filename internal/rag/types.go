@@ -33,11 +33,13 @@ type SubQuestionIntent struct {
 	Candidates  []IntentCandidate
 }
 
-// IntentGroup 合并所有子问题后的意图分组
+// IntentGroup 合并所有子问题后的意图分组。
+// AllSystemOnly 严格语义：所有子问题都仅命中"单个 SYSTEM 候选"才置位（对齐 Java IntentResolver.isSystemOnly + RAGChatServiceImpl 的 allSystemOnly 守卫）。
+// 混合 SYSTEM+KB 场景（如 "你好，介绍一下产品"）AllSystemOnly=false，仍走 RAG 检索。
 type IntentGroup struct {
-	KbIntents  []IntentCandidate // Kind=KB 的所有候选
-	McpIntents []IntentCandidate // Kind=MCP 的所有候选
-	HasSystem  bool              // 是否命中 SYSTEM 意图（用于跳过检索）
+	KbIntents     []IntentCandidate // Kind=KB 的所有候选
+	McpIntents    []IntentCandidate // Kind=MCP 的所有候选
+	AllSystemOnly bool              // 所有子问题都仅命中单个 SYSTEM 节点（用于纯系统应答短路）
 }
 
 // ──── 查询改写 ────────────────────────────────────────────
@@ -56,7 +58,7 @@ type RetrievedChunk struct {
 	DocID          int64
 	KbID           int64
 	Content        string
-	Score          float64
+	Score          float32
 	CollectionName string
 }
 

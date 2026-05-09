@@ -72,7 +72,7 @@ func parseSearchResults(results []milvusclient.SearchResult, collectionName stri
 
 	for i := 0; i < result.ResultCount; i++ {
 		chunk := RetrievedChunk{
-			Score:          float64(result.Scores[i]),
+			Score:          result.Scores[i],
 			CollectionName: collectionName,
 		}
 		if idCol != nil {

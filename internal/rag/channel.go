@@ -86,7 +86,14 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			chunks, err := c.retriever.Search(ctx, intent.CollectionName, sc.Question, topKPerIntent)
+			// Phase 6 临时回退：IntentNode.CollectionName 为空时退回 KB 默认集合，
+			// 避免运维填了"假"集合名时整通道查空。Phase 6.7 会把字段语义切到 partition，
+			// 届时这里改成 collection 固定 + partition 由 intent 决定（findings.md 详述）。
+			col := intent.CollectionName
+			if col == "" {
+				col = knowledge.BuildCollectionName(intent.KbID)
+			}
+			chunks, err := c.retriever.Search(ctx, col, sc.Question, topKPerIntent)
 			if err != nil {
 				resCh <- searchRes{err: err}
 				return

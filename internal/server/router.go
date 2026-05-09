@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/YuHangN/ragent-go/internal/knowledge"
+	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/errorcode"
 	"github.com/YuHangN/ragent-go/pkg/middleware"
@@ -17,6 +18,7 @@ type Deps struct {
 	KnowledgeKBHandler    *knowledge.KBHandler
 	KnowledgeDocHandler   *knowledge.DocHandler
 	KnowledgeChunkHandler *knowledge.ChunkHandler
+	IntentHandler         *rag.IntentHandler
 	JWTSecret             string
 	DemoMode              bool
 }
@@ -39,6 +41,11 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	registerHealthCheck(api)
 	user.RegisterRoutes(api, deps.AuthHandler, deps.UserHandler, deps.JWTSecret)
 	knowledge.RegisterRoutes(api, deps.KnowledgeKBHandler, deps.KnowledgeDocHandler, deps.KnowledgeChunkHandler, middleware.Auth(deps.JWTSecret))
+
+	// 意图树管理 + 调试检索；与 knowledge 同一鉴权粒度——/intent-nodes 与 /rag/test-retrieve 都
+	// 会触发 LLM / 向量检索调用，必须挂 JWT 鉴权。
+	ragGroup := api.Group("", middleware.Auth(deps.JWTSecret))
+	rag.RegisterRoutes(ragGroup, deps.IntentHandler)
 
 	return r
 }

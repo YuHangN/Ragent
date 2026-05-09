@@ -15,6 +15,7 @@ import (
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
+	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
@@ -69,10 +70,6 @@ func main() {
 	if err != nil {
 		zap.S().Fatalf("init rerank service: %v", err)
 	}
-
-	// llm / rerank 在 Phase 6/7 RAG 模块接入；此处提前构造以暴露启动期配置错误
-	_ = llmService
-	_ = rerankService
 
 	tokenCounter := aiclient.NewHeuristicTokenCounter()
 
@@ -133,6 +130,36 @@ func main() {
 	knowledgeDocHandler := knowledge.NewDocHandler(docSvc, chunkLogSvc)
 	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
+	// 10.5 RAG Core 服务：把 Phase 6 全套组件串成统一入口供 Phase 7 chat 调用。
+	// 整个链路：QueryRewrite → IntentResolver → MultiChannelEngine → Prompt。
+	intentRepo := rag.NewIntentRepo(gormDB)
+	retriever := rag.NewMilvusRetriever(milvusClient, embeddingService)
+
+	rewriteSvc := rag.NewQueryRewriteService(llmService, cfg.RAG.QueryRewrite)
+	classifier := rag.NewIntentClassifier(llmService, intentRepo)
+	intentResolver := rag.NewIntentResolver(
+		classifier,
+		3,                                                      // 单子问题最多保留 3 个意图候选
+		cfg.RAG.Search.Channels.IntentDirected.MinIntentScore, // 与 IntentDirected 通道复用同一阈值
+	)
+
+	dedupProc := &rag.DeduplicationProcessor{}
+	rerankProc := rag.NewRerankProcessor(rerankService)
+
+	intentDirectedCh := rag.NewIntentDirectedChannel(retriever, cfg.RAG.Search.Channels.IntentDirected)
+	vectorGlobalCh := rag.NewVectorGlobalChannel(retriever, kbRepo, cfg.RAG.Search.Channels.VectorGlobal)
+
+	ragEngine := rag.NewMultiChannelEngine(
+		[]rag.SearchChannel{intentDirectedCh, vectorGlobalCh},
+		[]rag.PostProcessor{dedupProc, rerankProc},
+	)
+	promptSvc := rag.NewPromptService()
+	ragCoreSvc := rag.NewRAGCoreService(rewriteSvc, intentResolver, ragEngine, promptSvc, cfg.RAG)
+
+	// IntentHandler 同时持有 ragCoreSvc，用于 /api/ragent/rag/test-retrieve 调试端点；
+	// Phase 7 chat 上线后该端点保留作为运维工具。
+	intentHandler := rag.NewIntentHandler(intentRepo, ragCoreSvc)
+
 	// 11. 启动后台 schedule job（依赖已全部就绪）
 	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(_ context.Context, docID int64) error {
 		zap.L().Info("schedule process doc", zap.Int64("docID", docID))
@@ -158,6 +185,7 @@ func main() {
 		KnowledgeKBHandler:    knowledgeKBHandler,
 		KnowledgeDocHandler:   knowledgeDocHandler,
 		KnowledgeChunkHandler: knowledgeChunkHandler,
+		IntentHandler:         intentHandler,
 		JWTSecret:             cfg.App.JWTSecret,
 		DemoMode:              cfg.App.DemoMode,
 	})

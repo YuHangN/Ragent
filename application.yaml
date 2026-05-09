@@ -93,6 +93,25 @@ ai:
         priority: 1
 
 rag:
+  default:
+    collection-name: "kb_default"
+    dimension: 1024
+    metric-type: "COSINE"
+  query-rewrite:
+    enabled: true
+    max-history-messages: 6
+    max-history-chars: 2000
+  search:
+    channels:
+      vector-global:
+        confidence-threshold: 0.6   # 已存在高置信意图时跳过全局兜底
+        top-k-multiplier: 3
+      intent-directed:
+        min-intent-score: 0.6       # 意图分数低于此值时忽略该候选
+        top-k-multiplier: 2
+  trace:
+    enabled: false
+    max-error-length: 500
   knowledge:
     schedule:
       scan-delay-ms: 10000

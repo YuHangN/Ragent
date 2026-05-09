@@ -63,11 +63,19 @@ type RetrievedChunk struct {
 }
 
 // SearchContext 是传递给检索引擎的完整上下文。
+//
+// Question 是改写后的主问题，主要给 RerankProcessor 用（rerank 评估的是 chunk 对
+// 整体问题的相关性，应该用主问题，不是单子问题）。
+// SubQuestions 是改写产出的子问题文本列表。
+// SubIntents 保留每个子问题与其意图候选的绑定关系，channel 据此做 per-sub-question
+// 路由：把对的子问题送到对的集合查（findings.md "channel 检索丢弃子问题精度"）。
+// IntentGroup 是 SubIntents 扁平合并后的视图，用于 SYSTEM 短路判断与外部摘要。
 type SearchContext struct {
 	KbIDs        []int64
 	Question     string
 	SubQuestions []string
-	IntentGroup  IntentGroup // 替换原 Intents 字段（KB/MCP 分流后的结果）
+	SubIntents   []SubQuestionIntent
+	IntentGroup  IntentGroup
 	TopK         int
 }
 

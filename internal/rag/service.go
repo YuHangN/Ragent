@@ -47,9 +47,13 @@ func (s *RAGCoreService) Retrieve(ctx context.Context, req RetrieveRequest) (*Re
 	}
 
 	// 2. 意图解析（多子问题并行 → 分组）
+	// subs 保留子问题→候选意图的绑定关系，供 channel 做 per-sub-question 路由；
+	// group 是扁平合并视图，仅用于 SYSTEM 短路判断（findings.md Phase 6.6）。
+	var subs []SubQuestionIntent
 	var group IntentGroup
 	if s.resolver != nil && len(req.KbIDs) > 0 {
-		subs, err := s.resolver.Resolve(ctx, req.KbIDs[0], rewriteResult)
+		var err error
+		subs, err = s.resolver.Resolve(ctx, req.KbIDs[0], rewriteResult)
 		if err == nil {
 			group = s.resolver.MergeGroup(subs)
 		}
@@ -75,6 +79,7 @@ func (s *RAGCoreService) Retrieve(ctx context.Context, req RetrieveRequest) (*Re
 		KbIDs:        req.KbIDs,
 		Question:     rewriteResult.RewrittenQuery,
 		SubQuestions: rewriteResult.SubQuestions,
+		SubIntents:   subs,
 		IntentGroup:  group,
 		TopK:         req.TopK,
 	}

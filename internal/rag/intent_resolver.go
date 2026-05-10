@@ -10,12 +10,15 @@ import (
 
 type IntentResolver struct {
 	classifier *IntentClassifier
-	// MaxIntents 单子问题最多保留的候选数（对应 Java MAX_INTENT_COUNT）
+	// MaxIntents 是单个子问题最多保留的候选数。
 	MaxIntents int
-	// MinScore 候选最低分数门槛（对应 Java INTENT_MIN_SCORE）
+	// MinScore 是候选意图的最低分数门槛。
 	MinScore float64
 }
 
+// NewIntentResolver 创建意图解析器。
+//
+// maxIntents <= 0 时默认使用 3，表示每个子问题最多保留 3 个候选意图。
 func NewIntentResolver(classifier *IntentClassifier, maxIntents int, minScore float64) *IntentResolver {
 	if maxIntents <= 0 {
 		maxIntents = 3
@@ -23,7 +26,16 @@ func NewIntentResolver(classifier *IntentClassifier, maxIntents int, minScore fl
 	return &IntentResolver{classifier: classifier, MaxIntents: maxIntents, MinScore: minScore}
 }
 
-// Resolve 对 RewriteResult 中的所有子问题并行执行意图分类，
+// Resolve 对改写结果中的每个子问题执行意图分类。
+//
+// 如果 rewrite.SubQuestions 为空，会退回使用 rewrite.RewrittenQuery，保证至少有一个
+// 查询文本参与分类。多个子问题会并行分类，返回结果仍按原子问题顺序排列。
+//
+// 例子：
+//   - RewrittenQuery="介绍产品 A，并说明退款政策"
+//   - SubQuestions=["介绍产品 A", "说明退款政策"]
+//
+// Resolve 会分别调用 classifier.Classify，并返回两个 SubQuestionIntent。
 func (r *IntentResolver) Resolve(ctx context.Context, kbID int64, rewrite RewriteResult) ([]SubQuestionIntent, error) {
 	subs := rewrite.SubQuestions
 	if len(subs) == 0 {
@@ -52,18 +64,25 @@ func (r *IntentResolver) Resolve(ctx context.Context, kbID int64, rewrite Rewrit
 
 // MergeGroup 把多子问题的候选列表合并为单个 IntentGroup。
 //
-// 关键规则（语义对齐 Java IntentResolver.isSystemOnly + RAGChatServiceImpl，
-// 但修正 Java `size == 1` 的保守 bug：多个 SYSTEM 候选并存仍算 system_only）：
-//   - 同一 NodeID 在多个子问题里出现时取最高分
-//   - SYSTEM 候选不进 KbIntents / McpIntents
-//   - AllSystemOnly = 所有子问题都满足"候选非空 且 全部候选 Kind==SYSTEM"
-//     混合 SYSTEM+KB/MCP 不短路；纯 SYSTEM（含多候选）才短路。
+// 合并规则：
+//   - 同一个 NodeID 在多个子问题中出现时，只保留最高分。
+//   - SYSTEM 候选不放进 KbIntents 或 McpIntents。
+//   - 只有所有子问题都“有候选，并且候选全是 SYSTEM”时，AllSystemOnly 才为 true。
+//
+// 例子 1：两个子问题都命中同一个 KB 节点，分数分别是 0.7 和 0.9，
+// 合并后只保留 0.9 的那个候选。
+//
+// 例子 2：“你好，介绍一下产品”被拆成“你好”和“介绍产品”：
+//   - “你好”命中 SYSTEM。
+//   - “介绍产品”命中 KB。
+//
+// 这不是纯系统问题，AllSystemOnly=false，后续仍会走 KB 检索。
 func (r *IntentResolver) MergeGroup(subs []SubQuestionIntent) IntentGroup {
 	bestByID := make(map[int64]IntentCandidate)
 	allSystemOnly := len(subs) > 0 // 没子问题不算 system_only
 
 	for _, s := range subs {
-		// 当前子问题是否"全部候选都是 SYSTEM"（候选非空 + 没有非-SYSTEM 类型）
+		// 候选非空，且没有任何非 SYSTEM 候选，才算这个子问题是纯系统意图。
 		thisSystemOnly := len(s.Candidates) > 0
 		for _, c := range s.Candidates {
 			if c.Kind != IntentKindSystem {

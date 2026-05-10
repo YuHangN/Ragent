@@ -20,19 +20,52 @@ const intentClassifyPromptTemplate = `你是一个意图分类助手。请对用
 请以 JSON 数组格式回复，不要输出任何其他内容：
 [{"node_id": 1, "score": 0.85}, {"node_id": 2, "score": 0.3}]`
 
-// IntentClassifier 使用 LLM 对意图节点列表打分，返回按分数降序排列的候选列表。
+// IntentClassifier 使用 LLM 给意图节点打分。
+//
+// 它不负责拆分问题，也不负责决定后续走哪个检索通道。它只做一件事：
+// 给某个 KB 下“可分类的意图节点”计算相关性分数，并转成 IntentCandidate。
+//
+// 例子：用户问题是“产品 A 怎么安装？”，KB 下有三个叶子意图：
+//   - 产品安装
+//   - 售后退款
+//   - 闲聊问候
+//
+// LLM 可能返回安装 0.92、退款 0.20、问候 0.05。Classify 会按 minScore 和 topK
+// 过滤后，只返回分数足够高的候选。
 type IntentClassifier struct {
 	llm        aiclient.LLMService
 	intentRepo IntentRepo
 }
 
+// NewIntentClassifier 创建意图分类器。
+//
+// llm 用来判断“问题和意图节点有多相关”；repo 用来加载指定 KB 下可分类的意图节点。
 func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassifier {
 	return &IntentClassifier{llm: llm, intentRepo: repo}
 }
 
-// Classify 对指定知识库下所有可分类的意图节点打分，
-// 返回分数超过 minScore 的 Top-K 候选（按分数降序）。
-// 候选已带上节点的 Kind / CollectionName / MCPToolID，调用方按 Kind 分流。
+// Classify 对指定 KB 下的可分类意图节点打分。
+//
+// 执行流程：
+//   - 从 intentRepo 读取该 KB 下可分类的节点。当前仓库实现只返回启用的叶子节点。
+//   - 把问题和节点列表拼进 prompt，让 LLM 返回 [{"node_id": ..., "score": ...}]。
+//   - 清理 LLM 可能包上的 markdown 代码块，再解析 JSON。
+//   - 丢弃低于 minScore 的结果，也丢弃仓库中不存在的 node_id。
+//   - 把分数合格的 IntentNode 转成 IntentCandidate，并按分数降序返回前 topK 个。
+//
+// 例子：kbID=100、question="产品 A 怎么安装？"、topK=2、minScore=0.5。
+// 仓库中有三个节点：
+//   - ID=1，Kind=KB，Name="产品安装"，CollectionName="kb_100"
+//   - ID=2，Kind=KB，Name="退款政策"，CollectionName="kb_100"
+//   - ID=3，Kind=SYSTEM，Name="闲聊问候"
+//
+// 如果 LLM 返回：
+//   - [{"node_id":1,"score":0.9},{"node_id":2,"score":0.4},{"node_id":999,"score":0.8}]
+//
+// 最终只返回 ID=1。ID=2 分数低于 minScore，ID=999 不在仓库节点列表中。
+//
+// 返回的候选会带上 Kind / CollectionName / MCPToolID。调用方可以根据 Kind
+// 决定后续是走 KB 检索、系统回复，还是外部工具。
 func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question string, topK int, minScore float64) ([]IntentCandidate, error) {
 	classifiable, err := c.intentRepo.FindClassifiableByKbID(kbID)
 	if err != nil {
@@ -42,7 +75,8 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 		return nil, nil
 	}
 
-	// 构建节点列表描述，供 LLM 参考。带上 Kind 让 LLM 理解节点性质。
+	// 构建节点列表描述，供 LLM 判断每个节点和问题的相关性。
+	// Kind 一起传给 LLM，避免把 SYSTEM / MCP / KB 节点混成同一种语义。
 	var nodeDescs []string
 	for _, n := range classifiable {
 		nodeDescs = append(nodeDescs,
@@ -62,6 +96,7 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 
 	cleaned := aiclient.StripMarkdownCodeFence(resp)
 
+	// LLM 应该只返回 JSON 数组；如果外层包了 ```json，前面已经清理掉。
 	var scores []struct {
 		NodeID int64   `json:"node_id"`
 		Score  float64 `json:"score"`
@@ -75,6 +110,7 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 		nodeMap[n.ID] = n
 	}
 
+	// 只信任当前 KB 中真实存在的节点。LLM 返回的未知 node_id 会被忽略。
 	var candidates []IntentCandidate
 	for _, s := range scores {
 		if s.Score < minScore {

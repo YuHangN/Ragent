@@ -1,12 +1,11 @@
-// Package rag 包含检索增强生成（RAG）相关的核心业务逻辑。
+// Package rag 包含检索增强生成（RAG）的核心逻辑。
 //
-// 本文件定义 RAG 检索阶段使用的“检索通道”。检索通道可以理解为不同的查资料策略：
-// 有些通道会根据意图识别结果，只去最相关的知识库集合中查；有些通道会在意图不够明确时，
-// 到指定知识库范围内做全局向量检索，作为兜底方案。
+// 本文件定义“检索通道”。通道只负责召回候选文档片段，不负责生成答案：
+//   - IntentDirectedChannel：意图明确时，只查相关知识库。
+//   - VectorGlobalChannel：意图不明确时，在用户指定的知识库中兜底查。
 //
-// 通俗来说：这个文件决定“用户问题应该去哪些知识库集合里查、怎么并行查、查完后如何
-// 标记结果来源和通道置信度”。它不直接负责回答问题，而是为后续 RAG 组装答案准备候选
-// 文档片段。
+// 一个请求可能同时启用多个通道。比如“介绍产品 A，也说说售后政策”被拆成两个子问题后，
+// 产品问题可以走定向通道，售后问题如果意图分数不够高，还可以走兜底通道。
 package rag
 
 import (
@@ -18,43 +17,61 @@ import (
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 )
 
-// IntentDirectedChannel 是基于意图识别结果的定向检索通道。
+// IntentDirectedChannel 根据意图结果做定向检索。
 //
-// 当用户问题被分类到一个或多个高置信度知识库意图时，该通道只检索这些意图绑定的
-// Milvus collection。相比全局检索，它的搜索范围更小，通常结果更精准、噪声更少。
+// 它适合“已经知道应该查哪个知识库”的场景。比如子问题“产品 A 怎么安装？”
+// 命中了“产品 A 手册”意图，分数达到阈值，本通道就只查产品 A 对应的 collection，
+// 不会把请求发到所有知识库。
 type IntentDirectedChannel struct {
 	retriever *MilvusRetriever
 	config    config.IntentDirectedChannelConfig
 }
 
-// NewIntentDirectedChannel 创建基于意图的定向检索通道。
+// NewIntentDirectedChannel 创建定向检索通道。
 //
-// retriever 负责实际访问 Milvus；cfg 控制最小意图分数、每个意图的 TopK 放大倍数等
-// 通道级策略参数。
+// retriever 负责真正访问 Milvus；cfg 负责控制“多高的意图分数才算命中”和
+// “每个意图要多召回多少条候选”。
+//
+// 例子：MinIntentScore=0.8、TopKMultiplier=2、sc.TopK=5 时，
+// 单个意图会先从 Milvus 召回 10 条候选，后面再交给后处理器去重和排序。
 func NewIntentDirectedChannel(retriever *MilvusRetriever, cfg config.IntentDirectedChannelConfig) *IntentDirectedChannel {
 	return &IntentDirectedChannel{retriever: retriever, config: cfg}
 }
 
-// Name 返回通道名称，用于日志、调试和结果归因。
+// Name 返回通道名称。
+//
+// 这个名称会写入 SearchChannelResult.ChannelName，方便日志、调试和结果归因。
+// 例子：后处理阶段看到 chunk 来自 "intent_directed"，就知道它是定向通道召回的。
 func (c *IntentDirectedChannel) Name() string { return "intent_directed" }
 
 // Priority 返回通道优先级，数值越小优先级越高。
+//
+// 定向通道优先级是 1，高于兜底通道的 10。后处理器如果遇到重复 chunk，
+// 可以优先保留更高优先级或更高置信度通道的结果。
 func (c *IntentDirectedChannel) Priority() int { return 1 }
 
-// directedTask 描述一次定向检索任务：用某个子问题文本，去查某个 KB 意图的目标集合。
+// directedTask 是一次具体的定向检索任务。
 //
-// 把"哪个子问题 × 哪个意图"显式表达成任务，channel 才能保留 sub-question 精度。
-// 同一个 sub-question 命中多个 KB 意图会展开成多条任务；不同 sub-question 命中
-// 同一个意图集合也展开成多条任务（查询文本不同），后续按 chunk.ID 去重即可。
+// 它把“查询文本”和“要查的意图”绑定在一起。
+// 例子：子问题“如何安装产品 A？”命中 KB=101 的“产品 A 手册”意图，
+// 就会生成一个 directedTask{subQuestion: "如何安装产品 A？", intent: 产品 A 手册}。
 type directedTask struct {
 	subQuestion string
 	intent      IntentCandidate
 }
 
-// IsEnabled 判断当前搜索上下文是否应该启用定向检索。
+// IsEnabled 判断是否存在足够明确的 KB 意图。
 //
-// 只要任意子问题的任意 KB 候选分数达到最小阈值，就说明问题已经有明确方向，可以优先走
-// 意图定向检索。SubIntents 为空（resolver 未生效）时退回旧逻辑，看扁平的 IntentGroup。
+// 判断规则：
+//   - 如果有 SubIntents，就逐个检查每个子问题的候选意图。
+//   - 只要发现 Kind=KB 且 Score >= MinIntentScore，就启用本通道。
+//   - 如果没有 SubIntents，就退回检查 IntentGroup.KbIntents。
+//
+// 例子：MinIntentScore=0.8，有两个子问题：
+//   - “产品 A 怎么安装？” -> KB 意图 0.92
+//   - “你是谁？” -> SYSTEM 意图 0.95
+//
+// 因为第一个子问题有 0.92 的 KB 意图，本函数返回 true。
 func (c *IntentDirectedChannel) IsEnabled(sc SearchContext) bool {
 	if len(sc.SubIntents) > 0 {
 		for _, sq := range sc.SubIntents {
@@ -74,14 +91,24 @@ func (c *IntentDirectedChannel) IsEnabled(sc SearchContext) bool {
 	return false
 }
 
-// Search 按 (子问题, KB 意图) 对并行检索对应的知识库集合。
+// Search 按“子问题 + KB 意图”并行检索。
 //
-// 用子问题文本而非主问题去查目标集合，避免多主题主问题污染单主题集合的检索精度
-// （findings.md "channel 检索丢弃子问题精度"）。单个任务失败不阻断其它任务；返回
-// 结果会补全 KbID，并以所有参与检索任务的意图平均分作为通道置信度。
+// 执行流程：
+//   - 先调用 buildTasks，把 SearchContext 展开成多个 directedTask。
+//   - 每个 task 启动一个 goroutine，并行查询对应 collection。
+//   - Milvus 返回的 chunk 只有 doc_id 等信息，这里会把 task.intent.KbID 回填到 chunk.KbID。
+//   - 单个 task 查询失败会被忽略，不会让整个通道失败。
 //
-// 当 SubIntents 为空（resolver 未生效或 KbIDs 空）时退回旧行为：用主问题查所有
-// 高分 KB 意图集合，保证向后兼容。
+// 例子：sc.TopK=5、TopKMultiplier=2，且有两个高分意图：
+//   - 子问题“产品 A 怎么安装？” -> KB=101，collection="kb_101"，score=0.92
+//   - 子问题“保修多久？” -> KB=202，collection="kb_202"，score=0.88
+//
+// 本函数会并行执行：
+//   - retriever.Search(ctx, "kb_101", "产品 A 怎么安装？", 10)
+//   - retriever.Search(ctx, "kb_202", "保修多久？", 10)
+//
+// 单个检索任务失败会被跳过，不影响其它任务。返回结果会补齐 KbID，
+// Confidence 使用参与检索任务的意图平均分。
 func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (SearchChannelResult, error) {
 	tasks := c.buildTasks(sc)
 
@@ -102,9 +129,7 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Phase 6 临时回退：IntentNode.CollectionName 为空时退回 KB 默认集合，
-			// 避免运维填了"假"集合名时整通道查空。Phase 6.7 会把字段语义切到 partition，
-			// 届时这里改成 collection 固定 + partition 由 intent 决定（findings.md 详述）。
+			// 如果意图没有指定集合，则使用该 KB 的默认集合。
 			col := task.intent.CollectionName
 			if col == "" {
 				col = knowledge.BuildCollectionName(task.intent.KbID)
@@ -150,10 +175,20 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 	}, nil
 }
 
-// buildTasks 把 SearchContext 展开成具体的检索任务列表。
+// buildTasks 把搜索上下文展开成定向检索任务。
 //
-// 优先消费 SubIntents（per-sub-question 路由）；SubIntents 为空时退回旧行为，
-// 用主问题查所有高分 KB 意图集合。
+// 优先使用 SubIntents，因为它保留了“哪个子问题命中了哪个意图”的关系。
+// 如果 SubIntents 为空，就用主问题 sc.Question 查询所有高分 KB 意图，兼容旧数据流。
+//
+// 例子：MinIntentScore=0.8，SubIntents 中有：
+//   - 子问题 A -> KB1 0.9、SYSTEM 0.7
+//   - 子问题 B -> KB2 0.6、KB3 0.85
+//
+// 本函数会生成两个任务：
+//   - 用子问题 A 查 KB1
+//   - 用子问题 B 查 KB3
+//
+// KB2 分数 0.6 低于阈值，SYSTEM 不是 KB 类型，所以都会被跳过。
 func (c *IntentDirectedChannel) buildTasks(sc SearchContext) []directedTask {
 	if len(sc.SubIntents) == 0 {
 		var tasks []directedTask
@@ -182,55 +217,70 @@ func (c *IntentDirectedChannel) buildTasks(sc SearchContext) []directedTask {
 
 // ──── VectorGlobalChannel ─────────────────────────────────
 
-// VectorGlobalChannel 是全局向量检索通道，用于意图不明确时的兜底检索。
+// VectorGlobalChannel 是兜底向量检索通道。
 //
-// 当没有系统意图、也没有足够高置信度的知识库意图时，该通道会在本次请求指定的知识库
-// 集合中并行检索，尽量保证用户问题仍然能拿到候选文档。
+// 它适合“还不知道具体该查哪个知识库意图，但仍然要尽量找资料”的场景。
+// 比如用户指定了 KB1、KB2，但某个子问题没有命中高分 KB 意图，本通道会用该子问题
+// 去 KB1、KB2 的默认 collection 都查一遍。
 type VectorGlobalChannel struct {
 	retriever *MilvusRetriever
 	kbRepo    knowledge.KBRepo
 	config    config.VectorGlobalChannelConfig
 }
 
-// NewVectorGlobalChannel 创建全局向量检索通道。
+// NewVectorGlobalChannel 创建兜底向量检索通道。
 //
-// kbRepo 用于把知识库 ID 解析为 Milvus collection 名称，retriever 负责执行实际的
-// 向量检索，cfg 控制启用阈值和 TopK 放大策略。
+// retriever 负责访问 Milvus；kbRepo 负责把用户传入的知识库 ID 查出来；
+// cfg 负责控制“子问题是否已被定向通道覆盖”和“每个集合召回多少候选”。
+//
+// 例子：用户传入 KbIDs=[101, 202]，本通道会先通过 kbRepo 校验这两个知识库，
+// 再把它们转换成默认 collection 名称。
 func NewVectorGlobalChannel(retriever *MilvusRetriever, kbRepo knowledge.KBRepo, cfg config.VectorGlobalChannelConfig) *VectorGlobalChannel {
 	return &VectorGlobalChannel{retriever: retriever, kbRepo: kbRepo, config: cfg}
 }
 
-// Name 返回通道名称，用于日志、调试和结果归因。
+// Name 返回通道名称。
+//
+// 这个名称会写入 SearchChannelResult.ChannelName。
+// 例子：结果来自 "vector_global" 时，说明它是兜底通道召回的。
 func (c *VectorGlobalChannel) Name() string { return "vector_global" }
 
 // Priority 返回通道优先级，数值越小优先级越高。
+//
+// 兜底通道优先级是 10，低于定向通道。它主要补充召回，不应该盖过明确意图召回。
 func (c *VectorGlobalChannel) Priority() int { return 10 }
 
-// globalTask 描述一次兜底检索任务：用某个查询文本，去某个 KB 默认集合查。
+// globalTask 是一次具体的兜底检索任务。
 //
-// 当某个子问题没有任何高置信度 KB 意图时，由本通道兜底；查询文本就用该子问题本身，
-// 而不是合并后的主问题，保持 sub-question 精度。
+// 它表示“用 query 去 collection 查，并把结果归到 kbID”。
+// 例子：用户指定 KB=101，未覆盖子问题是“是否支持退款？”，
+// 就会生成 globalTask{query: "是否支持退款？", collection: "kb_101", kbID: 101}。
 type globalTask struct {
-	query        string
-	collection   string
-	kbID         int64
+	query      string
+	collection string
+	kbID       int64
 }
 
-// IsEnabled 判断当前搜索上下文是否应该启用全局向量检索。
+// IsEnabled 判断是否需要兜底检索。
 //
-// 启用条件：
-//   - 不是纯 SYSTEM 问题（AllSystemOnly=false）
-//   - 至少存在一个"未覆盖"子问题，即没有任何 KB 候选分数 ≥ ConfidenceThreshold
-//   - 或者根本没有 SubIntents（resolver 未生效，整个就当兜底跑）
+// 判断规则：
+//   - 如果 IntentGroup.AllSystemOnly=true，说明是纯系统问题，不需要查知识库，返回 false。
+//   - 如果没有 SubIntents，说明没有子问题级路由信息，返回 true，用主问题整体兜底。
+//   - 如果有 SubIntents，只要存在一个“未被高置信度 KB 意图覆盖”的子问题，返回 true。
 //
-// 这样在"2 高分 + 1 低分"的混合场景下，本通道仍会针对低分子问题独立兜底，
-// 不会因为另外两个子问题命中高分意图就把自己整体关闭（findings.md Phase 6.6）。
+// 例子：ConfidenceThreshold=0.8，有 3 个子问题：
+//   - A -> KB 意图 0.91，已覆盖
+//   - B -> KB 意图 0.82，已覆盖
+//   - C -> KB 意图 0.45，未覆盖
+//
+// 本函数返回 true。后续 Search 只会为 C 做兜底检索，不会重复检索 A 和 B。
 func (c *VectorGlobalChannel) IsEnabled(sc SearchContext) bool {
 	if sc.IntentGroup.AllSystemOnly {
 		return false
 	}
+	// 没有子问题级路由信息，整体兜底
 	if len(sc.SubIntents) == 0 {
-		return true // 没有子问题级路由信息，整体兜底
+		return true
 	}
 	for _, sq := range sc.SubIntents {
 		if !c.isSubQuestionCovered(sq) {
@@ -240,7 +290,14 @@ func (c *VectorGlobalChannel) IsEnabled(sc SearchContext) bool {
 	return false // 所有子问题都被高置信度意图覆盖
 }
 
-// isSubQuestionCovered 判断单个子问题是否已被某个高置信度 KB 意图覆盖。
+// isSubQuestionCovered 判断子问题是否已有高置信度 KB 意图负责检索。
+//
+// 只看 KB 类型意图，SYSTEM 和 MCP 都不算覆盖。
+//
+// 例子：ConfidenceThreshold=0.8：
+//   - Candidates=[{Kind: KB, Score: 0.85}] -> true
+//   - Candidates=[{Kind: KB, Score: 0.60}] -> false
+//   - Candidates=[{Kind: SYSTEM, Score: 0.95}] -> false
 func (c *VectorGlobalChannel) isSubQuestionCovered(sq SubQuestionIntent) bool {
 	for _, intent := range sq.Candidates {
 		if intent.Kind == IntentKindKB && intent.Score >= c.config.ConfidenceThreshold {
@@ -250,13 +307,22 @@ func (c *VectorGlobalChannel) isSubQuestionCovered(sq SubQuestionIntent) bool {
 	return false
 }
 
-// Search 对每个未覆盖子问题在所有指定 KB 默认集合中并行检索，并合并候选片段。
+// Search 为未覆盖的子问题执行兜底检索。
 //
-// 与旧实现的关键差异：用未覆盖子问题文本去查，而不是用合并后的主问题。这样混合
-// 意图场景下，本通道只补低分子问题的"覆盖盲区"，而不是再用主问题对所有集合做一遍
-// 全量召回。SubIntents 为空时退回旧行为（用主问题查所有指定 KB）。
+// 执行流程：
+//   - 先把 sc.KbIDs 转成默认 collection 列表。
+//   - 再找出需要兜底的查询文本。
+//   - 将“查询文本 × collection”展开成多个 globalTask。
+//   - 每个 task 并行查询 Milvus，并把结果回填到对应 KbID。
 //
-// 单个任务失败被跳过，不阻断其它任务。
+// 例子：sc.KbIDs=[101, 202]、sc.TopK=5、TopKMultiplier=3，
+// 子问题 A 已被高分 KB 意图覆盖，子问题 B“是否支持退款？”未覆盖。
+//
+// 本函数会并行执行：
+//   - retriever.Search(ctx, "kb_101", "是否支持退款？", 15)
+//   - retriever.Search(ctx, "kb_202", "是否支持退款？", 15)
+//
+// SubIntents 为空时，会用主问题查询所有指定 KB。单个任务失败会被跳过。
 func (c *VectorGlobalChannel) Search(ctx context.Context, sc SearchContext) (SearchChannelResult, error) {
 	collections, kbMap, err := c.loadCollections(sc.KbIDs)
 	if err != nil {
@@ -310,9 +376,19 @@ func (c *VectorGlobalChannel) Search(ctx context.Context, sc SearchContext) (Sea
 	}, nil
 }
 
-// buildTasks 把"未覆盖子问题 × 指定 KB 默认集合"展开成 cartesian 任务列表。
+// buildTasks 把“未覆盖查询 × 指定 KB 默认集合”展开成检索任务。
 //
-// SubIntents 为空时退回主问题；混合意图场景下只为未覆盖的子问题分配兜底任务。
+// 这是一个笛卡尔积展开：每个需要兜底的查询，都会去每个指定 KB 的默认集合查。
+//
+// 例子：
+//   - 未覆盖查询：["是否支持退款？", "发票怎么开？"]
+//   - collections：{"kb_101": 101, "kb_202": 202}
+//
+// 本函数会生成 4 个任务：
+//   - "是否支持退款？" × "kb_101"
+//   - "是否支持退款？" × "kb_202"
+//   - "发票怎么开？" × "kb_101"
+//   - "发票怎么开？" × "kb_202"
 func (c *VectorGlobalChannel) buildTasks(sc SearchContext, collections map[string]int64) []globalTask {
 	queries := c.uncoveredQueries(sc)
 	if len(queries) == 0 || len(collections) == 0 {
@@ -327,11 +403,16 @@ func (c *VectorGlobalChannel) buildTasks(sc SearchContext, collections map[strin
 	return tasks
 }
 
-// uncoveredQueries 返回需要本通道兜底的查询文本列表。
+// uncoveredQueries 返回需要兜底检索的查询文本。
 //
-// SubIntents 为空 → 用主问题（resolver 未生效，整体兜底）。
-// 否则只挑出未被高置信度 KB 意图覆盖的子问题；如果 SubIntents 全被覆盖，IsEnabled
-// 已经把通道关掉了，理论上不会走到这里。
+// 返回规则：
+//   - 没有 SubIntents：返回 sc.Question，表示用主问题整体兜底。
+//   - 有 SubIntents：只返回没有被高置信度 KB 意图覆盖的子问题。
+//
+// 例子：ConfidenceThreshold=0.8：
+//   - 子问题 A -> KB 0.9，已覆盖，不返回。
+//   - 子问题 B -> KB 0.4，未覆盖，返回 B。
+//   - 子问题 C -> SYSTEM 0.95，不算 KB 覆盖，返回 C。
 func (c *VectorGlobalChannel) uncoveredQueries(sc SearchContext) []string {
 	if len(sc.SubIntents) == 0 {
 		if sc.Question == "" {
@@ -348,10 +429,17 @@ func (c *VectorGlobalChannel) uncoveredQueries(sc SearchContext) []string {
 	return queries
 }
 
-// loadCollections 根据知识库 ID 加载 Milvus collection 与知识库 ID 的映射关系。
+// loadCollections 根据知识库 ID 加载默认 Milvus collection。
 //
-// 返回的两个 map 当前内容一致，分别服务于“需要检索哪些 collection”和“检索结果应该
-// 回填哪个 KbID”两个语义，便于后续扩展不同来源的 collection 映射策略。
+// 返回两个 map：
+//   - cols：给 buildTasks 用，表示需要检索哪些 collection。
+//   - kbMap：给 Search 回填 KbID 用，表示某个 collection 属于哪个 KB。
+//
+// 例子：kbIDs=[101, 202]，并且两个知识库都存在，则返回：
+//   - cols={"kb_101": 101, "kb_202": 202}
+//   - kbMap={"kb_101": 101, "kb_202": 202}
+//
+// 如果某个 KB ID 查不到，当前实现会跳过它，继续处理其它 KB。
 func (c *VectorGlobalChannel) loadCollections(kbIDs []int64) (map[string]int64, map[string]int64, error) {
 	cols := make(map[string]int64)
 	kbMap := make(map[string]int64)

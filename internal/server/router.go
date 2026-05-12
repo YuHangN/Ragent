@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/YuHangN/ragent-go/internal/conversation"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/internal/user"
@@ -19,6 +20,7 @@ type Deps struct {
 	KnowledgeDocHandler   *knowledge.DocHandler
 	KnowledgeChunkHandler *knowledge.ChunkHandler
 	IntentHandler         *rag.IntentHandler
+	ChatHandler           *conversation.Handler
 	JWTSecret             string
 	DemoMode              bool
 }
@@ -46,6 +48,11 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	// 会触发 LLM / 向量检索调用，必须挂 JWT 鉴权。
 	ragGroup := api.Group("", middleware.Auth(deps.JWTSecret))
 	rag.RegisterRoutes(ragGroup, deps.IntentHandler)
+
+	// RAG Chat 主链路：/conversations CRUD + /chat + /chat/stream。
+	// 全部走 JWT 鉴权——chat 触发 LLM 调用，且历史消息按用户归属隔离。
+	chatGroup := api.Group("", middleware.Auth(deps.JWTSecret))
+	conversation.RegisterRoutes(chatGroup, deps.ChatHandler)
 
 	return r
 }

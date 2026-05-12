@@ -11,6 +11,7 @@ import (
 	"github.com/YuHangN/ragent-go/infra/db"
 	"github.com/YuHangN/ragent-go/infra/storage"
 	"github.com/YuHangN/ragent-go/infra/vector"
+	"github.com/YuHangN/ragent-go/internal/conversation"
 	"github.com/YuHangN/ragent-go/internal/ingestion"
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
@@ -139,7 +140,7 @@ func main() {
 	classifier := rag.NewIntentClassifier(llmService, intentRepo)
 	intentResolver := rag.NewIntentResolver(
 		classifier,
-		3,                                                      // 单子问题最多保留 3 个意图候选
+		3,                                                     // 单子问题最多保留 3 个意图候选
 		cfg.RAG.Search.Channels.IntentDirected.MinIntentScore, // 与 IntentDirected 通道复用同一阈值
 	)
 
@@ -159,6 +160,12 @@ func main() {
 	// IntentHandler 同时持有 ragCoreSvc，用于 /api/ragent/rag/test-retrieve 调试端点；
 	// Phase 7 chat 上线后该端点保留作为运维工具。
 	intentHandler := rag.NewIntentHandler(intentRepo, ragCoreSvc)
+
+	// 10.6 RAG Chat（Phase 7 MVP）：在 RAG Core 之上串会话历史、LLM 调用、SSE 流式。
+	convRepo := conversation.NewConversationRepo(gormDB)
+	convSvc := conversation.NewConversationService(convRepo)
+	chatSvc := conversation.NewChatService(convSvc, ragCoreSvc, llmService)
+	chatHandler := conversation.NewHandler(chatSvc, convSvc, convRepo)
 
 	// 11. 启动后台 schedule job（依赖已全部就绪）
 	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(_ context.Context, docID int64) error {
@@ -186,6 +193,7 @@ func main() {
 		KnowledgeDocHandler:   knowledgeDocHandler,
 		KnowledgeChunkHandler: knowledgeChunkHandler,
 		IntentHandler:         intentHandler,
+		ChatHandler:           chatHandler,
 		JWTSecret:             cfg.App.JWTSecret,
 		DemoMode:              cfg.App.DemoMode,
 	})

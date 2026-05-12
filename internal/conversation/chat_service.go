@@ -8,6 +8,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
@@ -110,4 +111,93 @@ func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendRe
 	}
 
 	return &SendResponse{Answer: answer, Chunks: retrieved.Chunks}, nil
+}
+
+// StreamCallback 是 chat 流式回调，由 ChatService.StreamMessage 调用。
+//
+// 与 aiclient.StreamCallback 的区别：这里只保留业务层关心的事件（增量内容、
+// 结束、错误），不暴露 thinking 流；OnComplete 携带完整答案与召回的 chunk，
+// 便于 HTTP 层一次性发"done"事件。
+type StreamCallback interface {
+	OnDelta(delta string)
+	OnComplete(answer string, chunks []rag.RetrievedChunk)
+	OnError(err error)
+}
+
+// StreamMessage 执行流式问答链路。
+//
+// 前置步骤（拉历史、写 user、跑 RAG）与 SendMessage 完全一致；区别只在 LLM
+// 调用走 StreamChat，并把每个 delta 通过回调实时推给 HTTP 层。完整答案在
+// 流自然结束时一次性持久化——避免每 token 一次 DB write 的写放大。
+//
+// 失败策略与 SendMessage 一致：任何前置步骤或 LLM 失败都不写 assistant 消息，
+// 保留干净的对话历史；err 已经通过 cb.OnError 通知给 HTTP 层，函数同时返回
+// 该 err 让调用方可以记日志。
+func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb StreamCallback) error {
+	history, err := s.conv.LoadHistory(req.ConversationID, historyMaxMessages)
+	if err != nil {
+		cb.OnError(err)
+		return err
+	}
+
+	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleUser, req.Question, ""); err != nil {
+		cb.OnError(err)
+		return err
+	}
+
+	retrieved, err := s.rag.Retrieve(ctx, rag.RetrieveRequest{
+		KbIDs:    req.KbIDs,
+		Question: req.Question,
+		History:  history,
+		TopK:     req.TopK,
+	})
+	if err != nil {
+		cb.OnError(err)
+		return err
+	}
+
+	bridge := &streamBridge{cb: cb}
+	if err := s.llm.StreamChat(ctx, aiclient.ChatRequest{Messages: retrieved.Messages}, bridge); err != nil {
+		// aiclient.LLMService.StreamChat 内部已调用 bridge.OnError；这里只需把
+		// 错误向上抛，不重复发 cb.OnError，避免前端收到两条 error event。
+		return err
+	}
+
+	// 流自然结束：把累积答案落库 + 发 done 事件给前端。
+	chunksJSON, _ := json.Marshal(retrieved.Chunks)
+	answer := bridge.answer.String()
+	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleAssistant, answer, string(chunksJSON)); err != nil {
+		cb.OnError(err)
+		return err
+	}
+	cb.OnComplete(answer, retrieved.Chunks)
+	return nil
+}
+
+// streamBridge 把 aiclient.StreamCallback（底层 LLM 流式接口）适配成
+// ChatService.StreamCallback（业务层接口）。
+//
+// 同时累积 OnContent delta 到 strings.Builder，供流结束后一次性落库——避免
+// 每 token 一次 DB write 的写放大。OnComplete 故意为空，由上层 StreamMessage
+// 在确认所有副作用都成功后才发业务层 OnComplete，保证"持久化失败就不发 done"。
+type streamBridge struct {
+	cb     StreamCallback
+	answer strings.Builder
+}
+
+func (b *streamBridge) OnContent(delta string) {
+	b.answer.WriteString(delta)
+	b.cb.OnDelta(delta)
+}
+
+// OnThinking 在 MVP 阶段忽略——业务层 StreamCallback 不暴露 thinking 流。
+// 后续如要把思维链展示给前端，再扩 StreamCallback 增加 OnThinkingDelta 即可。
+func (b *streamBridge) OnThinking(_ string) {}
+
+// OnComplete 故意空实现：上层 StreamMessage 在持久化 assistant 消息成功后
+// 才发业务层 cb.OnComplete，保证 done 事件与 DB 落盘同步。
+func (b *streamBridge) OnComplete() {}
+
+func (b *streamBridge) OnError(err error) {
+	b.cb.OnError(err)
 }

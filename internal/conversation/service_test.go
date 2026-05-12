@@ -82,6 +82,9 @@ func (m *mockRepo) ListMessages(cid int64, limit int) ([]Message, error) {
 
 // ──── 测试 ───────────────────────────────────────────────
 
+// TestCreateSession_StoresUserAndKbIDs 验证创建会话时会保存用户 ID 和知识库范围。
+//
+// title 传空串时不自动生成标题；标题自动填充由 AppendMessage 处理。
 func TestCreateSession_StoresUserAndKbIDs(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -93,6 +96,9 @@ func TestCreateSession_StoresUserAndKbIDs(t *testing.T) {
 	assert.NotZero(t, conv.ID)
 }
 
+// TestAppendMessage_AutoFillsTitleFromFirstUserMessage 验证首条用户消息会回填标题。
+//
+// 这是侧边栏会话摘要的默认来源：用户没显式传 title 时，用第一条 user 消息生成。
 func TestAppendMessage_AutoFillsTitleFromFirstUserMessage(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -104,6 +110,9 @@ func TestAppendMessage_AutoFillsTitleFromFirstUserMessage(t *testing.T) {
 	assert.Equal(t, "RAG 是什么？", updated.Title)
 }
 
+// TestAppendMessage_DoesNotOverwriteExistingTitle 验证已有标题不会被首条用户消息覆盖。
+//
+// 例子：用户创建会话时手动填了“已有标题”，后续提问不应该改掉它。
 func TestAppendMessage_DoesNotOverwriteExistingTitle(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -114,6 +123,9 @@ func TestAppendMessage_DoesNotOverwriteExistingTitle(t *testing.T) {
 	assert.Equal(t, "已有标题", updated.Title, "已有 title 不应被覆盖")
 }
 
+// TestAppendMessage_AssistantRoleDoesNotTriggerTitleFill 验证 assistant 消息不参与标题生成。
+//
+// 自动标题只来自用户问题，避免把模型回答写成会话标题。
 func TestAppendMessage_AssistantRoleDoesNotTriggerTitleFill(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -124,6 +136,9 @@ func TestAppendMessage_AssistantRoleDoesNotTriggerTitleFill(t *testing.T) {
 	assert.Empty(t, updated.Title, "assistant 消息不应触发 title 自动填充")
 }
 
+// TestAppendMessage_ConversationNotFound 验证追加消息前必须先找到会话。
+//
+// 找不到会话时，service 应该返回错误，而不是创建孤立消息。
 func TestAppendMessage_ConversationNotFound(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -131,6 +146,9 @@ func TestAppendMessage_ConversationNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestLoadHistory_ReturnsTimeOrderedChatMessages 验证历史消息会转成 LLM 可用格式。
+//
+// LoadHistory 只暴露 role/content，不带 ChunksJSON；返回顺序沿用 repo 的时间正序。
 func TestLoadHistory_ReturnsTimeOrderedChatMessages(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -149,6 +167,9 @@ func TestLoadHistory_ReturnsTimeOrderedChatMessages(t *testing.T) {
 	assert.Equal(t, "Q2", hist[2].Content)
 }
 
+// TestRenameTitle_OverwritesAnyExisting 验证显式重命名会覆盖旧标题。
+//
+// RenameTitle 是用户主动操作，不走自动标题的“不覆盖已有标题”规则。
 func TestRenameTitle_OverwritesAnyExisting(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -159,6 +180,7 @@ func TestRenameTitle_OverwritesAnyExisting(t *testing.T) {
 	assert.Equal(t, "新标题", updated.Title)
 }
 
+// TestRenameTitle_ConversationNotFound 验证重命名前必须找到会话。
 func TestRenameTitle_ConversationNotFound(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -168,16 +190,21 @@ func TestRenameTitle_ConversationNotFound(t *testing.T) {
 
 // ──── truncateTitle 行为 ─────────────────────────────────
 
+// TestTruncateTitle_NoTruncationUnderLimit 验证短标题保持原样。
 func TestTruncateTitle_NoTruncationUnderLimit(t *testing.T) {
 	assert.Equal(t, "short", truncateTitle("short", 30))
 }
 
+// TestTruncateTitle_TruncatesAtRuneBoundary 验证截断按 rune 处理。
+//
+// 中文字符是多字节 UTF-8；按 rune 截断可以避免产生乱码。
 func TestTruncateTitle_TruncatesAtRuneBoundary(t *testing.T) {
 	// 12 个中文字符，截到 5 应该是"测试一二三…"，不会截在 UTF-8 字节中间
 	got := truncateTitle("测试一二三四五六七八九十", 5)
 	assert.Equal(t, "测试一二三…", got)
 }
 
+// TestTruncateTitle_TrimsSurroundingWhitespace 验证生成标题前会去掉首尾空白。
 func TestTruncateTitle_TrimsSurroundingWhitespace(t *testing.T) {
 	assert.Equal(t, "hello", truncateTitle("  hello  ", 30))
 }

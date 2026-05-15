@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/YuHangN/ragent-go/internal/admin"
 	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,15 @@ func (c *captureCallback) OnError(err error) {
 	c.errs = append(c.errs, err)
 }
 
+// captureRecorder 收集 ChatService 落下的每条 trace，供测试断言耗时与结果。
+type captureRecorder struct {
+	records []*admin.TraceRecord
+}
+
+func (c *captureRecorder) Record(t *admin.TraceRecord) {
+	c.records = append(c.records, t)
+}
+
 // newTestChat 构造一组测试用的 ChatService + 底层 repo，方便用例直接断言落库状态。
 func newTestChat(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, *mockRepo) {
 	t.Helper()
@@ -70,6 +80,16 @@ func newTestChat(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, 
 	conv := NewConversationService(repo)
 	// recorder 传 nil → NewChatService 内部退化为 noopRecorder，测试不关心 trace 落库。
 	return NewChatService(conv, rag, llm, nil), repo
+}
+
+// newTestChatWithRecorder 与 newTestChat 相同，但额外注入一个 captureRecorder，
+// 供需要断言 trace 内容的用例使用。
+func newTestChatWithRecorder(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, *mockRepo, *captureRecorder) {
+	t.Helper()
+	repo := newMockRepo()
+	conv := NewConversationService(repo)
+	rec := &captureRecorder{}
+	return NewChatService(conv, rag, llm, rec), repo, rec
 }
 
 // fixedChunks 是用例共用的两条假 chunk，模拟 RAG 召回。
@@ -303,4 +323,90 @@ func TestStreamMessage_RetrieveFailure_ReportsOnError(t *testing.T) {
 	require.Len(t, cap.errs, 1)
 	assert.ErrorIs(t, cap.errs[0], retrieveErr)
 	assert.False(t, cap.complete)
+}
+
+// ──── trace 记录 ─────────────────────────────────────────
+
+// TestSendMessage_RecordsSuccessTrace 验证同步问答成功时落一条 Success=1 的 trace，
+// 且关键字段（用户、改写后 query、chunks 数）都被填上。
+func TestSendMessage_RecordsSuccessTrace(t *testing.T) {
+	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+		return fixedRetrieveResult(), nil
+	}}
+	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
+		return "答案", nil
+	}}
+
+	svc, _, rec := newTestChatWithRecorder(t, rr, llm)
+	conv, _ := svc.conv.CreateSession(7, []int64{1}, "")
+
+	_, err := svc.SendMessage(context.Background(), SendRequest{
+		ConversationID: conv.ID,
+		UserID:         7,
+		Question:       "什么是 RAG？",
+	})
+	require.NoError(t, err)
+
+	require.Len(t, rec.records, 1, "成功路径应落且只落一条 trace")
+	tr := rec.records[0]
+	assert.Equal(t, 1, tr.Success)
+	assert.Empty(t, tr.ErrorMessage)
+	assert.Equal(t, int64(7), tr.UserID)
+	assert.Equal(t, conv.ID, tr.ConversationID)
+	assert.Equal(t, "什么是 RAG？", tr.Question)
+	assert.Equal(t, "rewritten", tr.RewrittenQuery)
+	assert.Equal(t, 2, tr.ChunksCount)
+	assert.GreaterOrEqual(t, tr.TotalMs, int64(0))
+}
+
+// TestSendMessage_RecordsFailureTrace 验证 RAG 失败时也落 trace，Success=0、
+// ErrorMessage 非空——失败请求同样要被观测到。
+func TestSendMessage_RecordsFailureTrace(t *testing.T) {
+	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+		return nil, errors.New("milvus down")
+	}}
+	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
+		t.Fatal("LLM 不该被调用")
+		return "", nil
+	}}
+
+	svc, _, rec := newTestChatWithRecorder(t, rr, llm)
+	conv, _ := svc.conv.CreateSession(1, nil, "")
+
+	_, err := svc.SendMessage(context.Background(), SendRequest{
+		ConversationID: conv.ID,
+		Question:       "Q",
+	})
+	require.Error(t, err)
+
+	require.Len(t, rec.records, 1, "失败路径同样要落 trace")
+	tr := rec.records[0]
+	assert.Equal(t, 0, tr.Success)
+	assert.Contains(t, tr.ErrorMessage, "milvus down")
+	assert.Zero(t, tr.LLMMs, "RAG 失败时 LLM 阶段未到达，耗时应为 0")
+}
+
+// TestStreamMessage_RecordsSuccessTrace 验证流式问答成功时也落一条 Success=1 的 trace。
+func TestStreamMessage_RecordsSuccessTrace(t *testing.T) {
+	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+		return fixedRetrieveResult(), nil
+	}}
+	llm := &mockLLM{onStream: func(_ aiclient.ChatRequest, cb aiclient.StreamCallback) error {
+		cb.OnContent("a")
+		cb.OnContent("b")
+		return nil
+	}}
+
+	svc, _, rec := newTestChatWithRecorder(t, rr, llm)
+	conv, _ := svc.conv.CreateSession(1, nil, "")
+
+	err := svc.StreamMessage(context.Background(), SendRequest{
+		ConversationID: conv.ID,
+		Question:       "Q",
+	}, &captureCallback{})
+	require.NoError(t, err)
+
+	require.Len(t, rec.records, 1)
+	assert.Equal(t, 1, rec.records[0].Success)
+	assert.Equal(t, 2, rec.records[0].ChunksCount)
 }

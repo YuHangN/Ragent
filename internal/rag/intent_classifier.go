@@ -55,8 +55,8 @@ func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassi
 //
 // 例子：kbID=100、question="产品 A 怎么安装？"、topK=2、minScore=0.5。
 // 仓库中有三个节点：
-//   - ID=1，Kind=KB，Name="产品安装"，CollectionName="kb_100"
-//   - ID=2，Kind=KB，Name="退款政策"，CollectionName="kb_100"
+//   - ID=1，Kind=KB，Name="产品安装"，PartitionName="install"
+//   - ID=2，Kind=KB，Name="退款政策"，PartitionName="refund"
 //   - ID=3，Kind=SYSTEM，Name="闲聊问候"
 //
 // 如果 LLM 返回：
@@ -64,8 +64,8 @@ func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassi
 //
 // 最终只返回 ID=1。ID=2 分数低于 minScore，ID=999 不在仓库节点列表中。
 //
-// 返回的候选会带上 Kind / CollectionName / MCPToolID。调用方可以根据 Kind
-// 决定后续是走 KB 检索、系统回复，还是外部工具。
+// 返回的候选会带上 Kind / PartitionName / MCPToolID。调用方可以根据 Kind
+// 决定后续是走 KB 检索（用 PartitionName 缩范围）、系统回复，还是外部工具。
 func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question string, topK int, minScore float64) ([]IntentCandidate, error) {
 	classifiable, err := c.intentRepo.FindClassifiableByKbID(kbID)
 	if err != nil {
@@ -125,7 +125,7 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 			NodeName:       n.Name,
 			KbID:           n.KbID,
 			Kind:           n.Kind,
-			CollectionName: n.CollectionName, // 节点自带，无需回溯
+			PartitionName: n.PartitionName, // 节点自带，无需回溯
 			MCPToolID:      n.MCPToolID,
 			Score:          s.Score,
 		})

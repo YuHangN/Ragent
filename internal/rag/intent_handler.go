@@ -33,22 +33,22 @@ func NewIntentHandler(repo IntentRepo, ragCore *RAGCoreService) *IntentHandler {
 // intentNodeCreateRequest 是创建意图节点的入参。
 //
 // 常见例子：
-//   - Kind=KB 时，CollectionName 表示后续要检索的 Milvus collection。
-//   - Kind=SYSTEM 时，通常不需要 CollectionName。
+//   - Kind=KB 时，PartitionName 表示 KB collection 下要检索的 Milvus partition 名（如 "install" / "refund"）。
+//   - Kind=SYSTEM 时，通常不需要 PartitionName。
 //   - Kind=MCP 时，MCPToolID 表示要调用的外部工具。
 type intentNodeCreateRequest struct {
-	KbID           int64      `json:"kbId" binding:"required"`
-	ParentID       *int64     `json:"parentId"`
-	Name           string     `json:"name" binding:"required"`
-	Description    string     `json:"description"`
-	Examples       string     `json:"examples"`
-	Level          int        `json:"level" binding:"required"`
-	Kind           IntentKind `json:"kind" binding:"required"`
-	CollectionName string     `json:"collectionName"`
-	MCPToolID      string     `json:"mcpToolId"`
-	PromptSnippet  string     `json:"promptSnippet"`
-	TopK           *int       `json:"topK"`
-	SortOrder      int        `json:"sortOrder"`
+	KbID          int64      `json:"kbId" binding:"required"`
+	ParentID      *int64     `json:"parentId"`
+	Name          string     `json:"name" binding:"required"`
+	Description   string     `json:"description"`
+	Examples      string     `json:"examples"`
+	Level         int        `json:"level" binding:"required"`
+	Kind          IntentKind `json:"kind" binding:"required"`
+	PartitionName string     `json:"partitionName"`
+	MCPToolID     string     `json:"mcpToolId"`
+	PromptSnippet string     `json:"promptSnippet"`
+	TopK          *int       `json:"topK"`
+	SortOrder     int        `json:"sortOrder"`
 }
 
 // CreateIntentNode 创建一个意图节点。
@@ -65,19 +65,19 @@ func (h *IntentHandler) CreateIntentNode(c *gin.Context) {
 	}
 
 	node := &IntentNode{
-		KbID:           req.KbID,
-		ParentID:       req.ParentID,
-		Name:           req.Name,
-		Description:    req.Description,
-		Examples:       req.Examples,
-		Level:          req.Level,
-		Kind:           req.Kind,
-		CollectionName: req.CollectionName,
-		MCPToolID:      req.MCPToolID,
-		PromptSnippet:  req.PromptSnippet,
-		TopK:           req.TopK,
-		SortOrder:      req.SortOrder,
-		Enabled:        1,
+		KbID:          req.KbID,
+		ParentID:      req.ParentID,
+		Name:          req.Name,
+		Description:   req.Description,
+		Examples:      req.Examples,
+		Level:         req.Level,
+		Kind:          req.Kind,
+		PartitionName: req.PartitionName,
+		MCPToolID:     req.MCPToolID,
+		PromptSnippet: req.PromptSnippet,
+		TopK:          req.TopK,
+		SortOrder:     req.SortOrder,
+		Enabled:       1,
 	}
 	if err := h.repo.Create(node); err != nil {
 		_ = c.Error(err)

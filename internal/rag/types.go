@@ -22,7 +22,7 @@ type IntentCandidate struct {
 	NodeName       string
 	KbID           int64
 	Kind           IntentKind // 新增
-	CollectionName string     // KB 类型生效；MCP/SYSTEM 留空
+	PartitionName  string     // KB 类型生效，检索目标 partition 名；MCP/SYSTEM 留空
 	MCPToolID      string     // 新增（MCP 类型生效，Phase 10 用）
 	Score          float64    // 0.0–1.0
 }

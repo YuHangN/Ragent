@@ -129,8 +129,10 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// 如果意图没有指定集合，则使用该 KB 的默认集合。
-			col := task.intent.CollectionName
+			// Phase 6.7 过渡期：T1 仅做字段重命名以保持编译通过；真正改成
+			// "collection=kb_{kbID}, partition=PartitionName" 是 T4 的工作。
+			// TODO(phase6.7-t4): 改造为 partition-aware 检索
+			col := task.intent.PartitionName
 			if col == "" {
 				col = knowledge.BuildCollectionName(task.intent.KbID)
 			}

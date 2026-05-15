@@ -26,7 +26,7 @@ type IntentNodeTreeVO struct {
 	Examples       string             `json:"examples,omitempty"`
 	Level          int                `json:"level"`
 	Kind           IntentKind         `json:"kind"`
-	CollectionName string             `json:"collectionName,omitempty"`
+	PartitionName  string             `json:"partitionName,omitempty"`
 	MCPToolID      string             `json:"mcpToolId,omitempty"`
 	TopK           *int               `json:"topK,omitempty"`
 	Enabled        bool               `json:"enabled"`
@@ -89,7 +89,7 @@ func toTreeVO(n *IntentNode) IntentNodeTreeVO {
 		Examples:       n.Examples,
 		Level:          n.Level,
 		Kind:           n.Kind,
-		CollectionName: n.CollectionName,
+		PartitionName:  n.PartitionName,
 		MCPToolID:      n.MCPToolID,
 		TopK:           n.TopK,
 		Enabled:        n.Enabled == 1,

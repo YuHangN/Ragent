@@ -25,7 +25,7 @@ type IntentNode struct {
 	Examples       string         `gorm:"column:examples;type:text"`       // JSON 数组：示例问题（few-shot）
 	Level          int            `gorm:"column:level;default:1"`          // 树形层级 1/2/3...
 	Kind           IntentKind     `gorm:"column:kind;not null"`            // KB / SYSTEM / MCP（语义类型）
-	CollectionName string         `gorm:"column:collection_name"`          // Kind=KB 时填，检索目标集合
+	PartitionName  string         `gorm:"column:partition_name"`           // Kind=KB 时填，对应 KB collection 下的 Milvus partition 名
 	MCPToolID      string         `gorm:"column:mcp_tool_id"`              // Kind=MCP 时填，外部工具 ID
 	PromptSnippet  string         `gorm:"column:prompt_snippet;type:text"` // 命中时附加到 prompt 的提示语段
 	TopK           *int           `gorm:"column:top_k"`                    // 节点级 topK 覆盖（nil = 用全局默认）

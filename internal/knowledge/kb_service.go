@@ -153,6 +153,10 @@ func BuildCollectionName(kbID int64) string {
 	return fmt.Sprintf("kb_%d", kbID)
 }
 
+// DefaultPartitionName 是每个 collection 自带的系统默认 partition 名（Milvus 自动创建）。
+// 没指定 target partition 的文档全部写入这里；retriever 不传 partitions 时也会自动扫所有 partition。
+const DefaultPartitionName = "_default"
+
 // ──────────────────────────────────────────────────────────
 // 内部辅助
 // ──────────────────────────────────────────────────────────

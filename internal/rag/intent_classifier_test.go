@@ -31,8 +31,8 @@ func TestIntentKind_Constants(t *testing.T) {
 
 func TestClassify_FiltersByMinScore(t *testing.T) {
 	repo := &stubIntentRepo{classifiable: []IntentNode{
-		{ID: 1, KbID: 100, Name: "节点A", Kind: IntentKindKB, CollectionName: "kb_100"},
-		{ID: 2, KbID: 100, Name: "节点B", Kind: IntentKindKB, CollectionName: "kb_100"},
+		{ID: 1, KbID: 100, Name: "节点A", Kind: IntentKindKB, PartitionName: "install"},
+		{ID: 2, KbID: 100, Name: "节点B", Kind: IntentKindKB, PartitionName: "refund"},
 	}}
 	llm := &stubLLM{resp: `[{"node_id":1,"score":0.9},{"node_id":2,"score":0.3}]`}
 	cls := NewIntentClassifier(llm, repo)
@@ -42,12 +42,12 @@ func TestClassify_FiltersByMinScore(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, int64(1), got[0].NodeID)
 	assert.InDelta(t, 0.9, got[0].Score, 0.001)
-	assert.Equal(t, "kb_100", got[0].CollectionName)
+	assert.Equal(t, "install", got[0].PartitionName)
 }
 
 func TestClassify_HandlesMarkdownCodeFence(t *testing.T) {
 	repo := &stubIntentRepo{classifiable: []IntentNode{
-		{ID: 1, Kind: IntentKindKB, CollectionName: "kb_1"},
+		{ID: 1, Kind: IntentKindKB, PartitionName: "p1"},
 	}}
 	llm := &stubLLM{resp: "```json\n[{\"node_id\":1,\"score\":0.8}]\n```"}
 	cls := NewIntentClassifier(llm, repo)

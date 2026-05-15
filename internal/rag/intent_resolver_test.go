@@ -10,10 +10,10 @@ func TestMergeGroup_DedupKeepHighestScore(t *testing.T) {
 	r := &IntentResolver{}
 	subs := []SubQuestionIntent{
 		{SubQuestion: "Q1", Candidates: []IntentCandidate{
-			{NodeID: 1, Kind: IntentKindKB, CollectionName: "kb_1", Score: 0.7},
+			{NodeID: 1, Kind: IntentKindKB, PartitionName: "p1", Score: 0.7},
 		}},
 		{SubQuestion: "Q2", Candidates: []IntentCandidate{
-			{NodeID: 1, Kind: IntentKindKB, CollectionName: "kb_1", Score: 0.9}, // 同 NodeID 高分
+			{NodeID: 1, Kind: IntentKindKB, PartitionName: "p1", Score: 0.9}, // 同 NodeID 高分
 			{NodeID: 2, Kind: IntentKindMCP, MCPToolID: "tool_x", Score: 0.6},
 		}},
 	}
@@ -50,7 +50,7 @@ func TestMergeGroup_AllSystemOnly_MixedKbAndSystem_NotShortCircuit(t *testing.T)
 			{NodeID: 99, Kind: IntentKindSystem, Score: 0.9},
 		}},
 		{SubQuestion: "介绍产品", Candidates: []IntentCandidate{
-			{NodeID: 5, Kind: IntentKindKB, CollectionName: "kb_5", Score: 0.85},
+			{NodeID: 5, Kind: IntentKindKB, PartitionName: "p5", Score: 0.85},
 		}},
 	}
 	g := r.MergeGroup(subs)
@@ -81,7 +81,7 @@ func TestMergeGroup_AllSystemOnly_SystemPlusKbInOneSubQuestion_NotShortCircuit(t
 	subs := []SubQuestionIntent{
 		{SubQuestion: "Q", Candidates: []IntentCandidate{
 			{NodeID: 99, Kind: IntentKindSystem, Score: 0.7},
-			{NodeID: 5, Kind: IntentKindKB, CollectionName: "kb_5", Score: 0.6},
+			{NodeID: 5, Kind: IntentKindKB, PartitionName: "p5", Score: 0.6},
 		}},
 	}
 	g := r.MergeGroup(subs)

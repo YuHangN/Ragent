@@ -162,12 +162,21 @@ func main() {
 	// Phase 7 chat 上线后该端点保留作为运维工具。
 	intentHandler := rag.NewIntentHandler(intentRepo, ragCoreSvc)
 
-	// 10.6 RAG Chat（Phase 7 MVP）：在 RAG Core 之上串会话历史、LLM 调用、SSE 流式。
-	// traceRecorder 在 Task 4 会改成按 cfg.RAG.Trace.Enabled 注入 mysqlRecorder；
-	// 当前先用 noop 占位，保证编译通过。
+	// 10.6 RAG 链路追踪（Phase 8 MVP）：按配置决定是否真落库。
+	// cfg.RAG.Trace.Enabled=false 时用 noopRecorder，chat 主路径零开销。
+	traceRepo := admin.NewTraceRepo(gormDB)
+	var traceRecorder admin.TraceRecorder
+	if cfg.RAG.Trace.Enabled {
+		traceRecorder = admin.NewMySQLRecorder(traceRepo, zap.L())
+	} else {
+		traceRecorder = admin.NewNoopRecorder()
+	}
+	adminHandler := admin.NewHandler(traceRepo)
+
+	// 10.7 RAG Chat（Phase 7 MVP）：在 RAG Core 之上串会话历史、LLM 调用、SSE 流式。
 	convRepo := conversation.NewConversationRepo(gormDB)
 	convSvc := conversation.NewConversationService(convRepo)
-	chatSvc := conversation.NewChatService(convSvc, ragCoreSvc, llmService, admin.NewNoopRecorder())
+	chatSvc := conversation.NewChatService(convSvc, ragCoreSvc, llmService, traceRecorder)
 	chatHandler := conversation.NewHandler(chatSvc, convSvc, convRepo)
 
 	// 11. 启动后台 schedule job（依赖已全部就绪）
@@ -197,6 +206,7 @@ func main() {
 		KnowledgeChunkHandler: knowledgeChunkHandler,
 		IntentHandler:         intentHandler,
 		ChatHandler:           chatHandler,
+		AdminHandler:          adminHandler,
 		JWTSecret:             cfg.App.JWTSecret,
 		DemoMode:              cfg.App.DemoMode,
 	})

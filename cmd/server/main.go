@@ -107,18 +107,20 @@ func main() {
 
 	s3Fetcher := fetcher.NewS3Fetcher(s3Client)
 
-	// 9. Ingestion pipeline（Phase 5）
+	// 9. Ingestion pipeline（Phase 5；Phase 9 加入 LLM enrichment）
 	ingestionSvc := ingestion.NewIngestionService(
 		parserSel,
 		s3Fetcher,
 		milvusClient,
 		embeddingService,
+		llmService,
 		docRepo,
 		chunkRepo,
 		ingestion.IngestionServiceConfig{
 			ChunkerStrategy: ingestion.FixedSizeChunker{},
 			ChunkSize:       512,
 			Overlap:         128,
+			Enrichment:      cfg.Ingestion.Enrichment,
 		},
 		chunkLogSvc,
 		tokenCounter,

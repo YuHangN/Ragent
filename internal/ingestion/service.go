@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/YuHangN/ragent-go/config"
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
@@ -16,30 +17,39 @@ import (
 
 // IngestionService is the public entry point for the ingestion pipeline.
 type IngestionService struct {
-	parserSel *parser.DocumentParserSelector
-	s3Fetcher *fetcher.S3Fetcher
-	milvus    milvusclient.Client
-	embedding aiclient.EmbeddingService
-	docRepo   knowledge.DocRepo
-	chunkRepo knowledge.ChunkRepo
-	chunker   ChunkerStrategy
-	chunkSize int
-	overlap   int
-	chunkLog  *knowledge.ChunkLogService
-	tokens    aiclient.TokenCounter
+	parserSel     *parser.DocumentParserSelector
+	s3Fetcher     *fetcher.S3Fetcher
+	milvus        milvusclient.Client
+	embedding     aiclient.EmbeddingService
+	llm           aiclient.LLMService
+	docRepo       knowledge.DocRepo
+	chunkRepo     knowledge.ChunkRepo
+	chunker       ChunkerStrategy
+	chunkSize     int
+	overlap       int
+	chunkLog      *knowledge.ChunkLogService
+	tokens        aiclient.TokenCounter
+	enrichmentCfg config.EnrichmentConfig
 }
 
 type IngestionServiceConfig struct {
-	ChunkerStrategy ChunkerStrategy // default: FixedSizeChunker{}
-	ChunkSize       int             // default: 512
-	Overlap         int             // default: 128
+	ChunkerStrategy ChunkerStrategy          // default: FixedSizeChunker{}
+	ChunkSize       int                      // default: 512
+	Overlap         int                      // default: 128
+	Enrichment      config.EnrichmentConfig  // 默认零值：两个 enabled 都 false → pipeline 与 Phase 9 之前一致
 }
 
+// NewIngestionService 构造摄入服务。
+//
+// llm 可以传 nil——只要 Enrichment 的两个 enabled 标志都为 false，pipeline
+// 不会用到它。开启任一开关又没传 llm 会在 ProcessDocument 第一次跑到对应节点
+// 时崩，构造期不强校验是为了让测试可以构造一个不开 enrichment 的实例。
 func NewIngestionService(
 	parserSel *parser.DocumentParserSelector,
 	s3Fetcher *fetcher.S3Fetcher,
 	milvus milvusclient.Client,
 	embedding aiclient.EmbeddingService,
+	llm aiclient.LLMService,
 	docRepo knowledge.DocRepo,
 	chunkRepo knowledge.ChunkRepo,
 	cfg IngestionServiceConfig,
@@ -57,17 +67,19 @@ func NewIngestionService(
 	}
 
 	return &IngestionService{
-		parserSel: parserSel,
-		s3Fetcher: s3Fetcher,
-		milvus:    milvus,
-		embedding: embedding,
-		docRepo:   docRepo,
-		chunkRepo: chunkRepo,
-		chunker:   cfg.ChunkerStrategy,
-		chunkSize: cfg.ChunkSize,
-		overlap:   cfg.Overlap,
-		chunkLog:  chunkLog,
-		tokens:    tokens,
+		parserSel:     parserSel,
+		s3Fetcher:     s3Fetcher,
+		milvus:        milvus,
+		embedding:     embedding,
+		llm:           llm,
+		docRepo:       docRepo,
+		chunkRepo:     chunkRepo,
+		chunker:       cfg.ChunkerStrategy,
+		chunkSize:     cfg.ChunkSize,
+		overlap:       cfg.Overlap,
+		chunkLog:      chunkLog,
+		tokens:        tokens,
+		enrichmentCfg: cfg.Enrichment,
 	}
 }
 
@@ -121,14 +133,24 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 		Status: "running",
 	}
 
-	// 4. 构造并运行管道：fetcher → parser → chunker → embedder → indexer
-	pipeline := NewPipeline(
+	// 4. 构造并运行管道：fetcher → parser → [enhancer] → chunker → [enricher] → embedder → indexer
+	// Enhancer / Enricher 由 enrichment 配置控制；都关掉时管道形状与 Phase 9 之前一致。
+	nodes := []Node{
 		NewFetcherNode(s.s3Fetcher),
 		NewParserNode(s.parserSel),
-		NewChunkerNode(s.chunker, s.chunkSize, s.overlap),
+	}
+	if s.enrichmentCfg.EnhancerEnabled {
+		nodes = append(nodes, NewEnhancerNode(s.llm))
+	}
+	nodes = append(nodes, NewChunkerNode(s.chunker, s.chunkSize, s.overlap))
+	if s.enrichmentCfg.EnricherEnabled {
+		nodes = append(nodes, NewEnricherNode(s.llm, s.enrichmentCfg.EnricherConcurrency()))
+	}
+	nodes = append(nodes,
 		NewEmbedderNode(s.embedding),
 		NewIndexerNode(s.milvus),
 	)
+	pipeline := NewPipeline(nodes...)
 
 	runErr := pipeline.Run(ctx, ic)
 

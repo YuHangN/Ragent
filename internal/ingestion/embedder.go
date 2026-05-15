@@ -25,9 +25,16 @@ func (n *EmbedderNode) Execute(ctx context.Context, ic *IngestionContext) NodeRe
 		return Fail(fmt.Errorf("embedder: no chunks to embed"))
 	}
 
+	// 优先用 EnricherNode 拼好的 EmbedText（原文 + 摘要 + 假设问题），
+	// 没有就退回 Content——这样关掉 EnricherNode 或单个 chunk 增强失败时，
+	// embedding 行为与 Phase 9 之前完全一致。
 	texts := make([]string, len(ic.Chunks))
 	for i, ch := range ic.Chunks {
-		texts[i] = ch.Content
+		if ch.EmbedText != "" {
+			texts[i] = ch.EmbedText
+		} else {
+			texts[i] = ch.Content
+		}
 	}
 
 	vectors, err := n.embedding.EmbedBatch(ctx, texts)

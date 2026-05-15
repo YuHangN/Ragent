@@ -11,6 +11,7 @@ import (
 	"github.com/YuHangN/ragent-go/infra/db"
 	"github.com/YuHangN/ragent-go/infra/storage"
 	"github.com/YuHangN/ragent-go/infra/vector"
+	"github.com/YuHangN/ragent-go/internal/admin"
 	"github.com/YuHangN/ragent-go/internal/conversation"
 	"github.com/YuHangN/ragent-go/internal/ingestion"
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
@@ -162,9 +163,11 @@ func main() {
 	intentHandler := rag.NewIntentHandler(intentRepo, ragCoreSvc)
 
 	// 10.6 RAG Chat（Phase 7 MVP）：在 RAG Core 之上串会话历史、LLM 调用、SSE 流式。
+	// traceRecorder 在 Task 4 会改成按 cfg.RAG.Trace.Enabled 注入 mysqlRecorder；
+	// 当前先用 noop 占位，保证编译通过。
 	convRepo := conversation.NewConversationRepo(gormDB)
 	convSvc := conversation.NewConversationService(convRepo)
-	chatSvc := conversation.NewChatService(convSvc, ragCoreSvc, llmService)
+	chatSvc := conversation.NewChatService(convSvc, ragCoreSvc, llmService, admin.NewNoopRecorder())
 	chatHandler := conversation.NewHandler(chatSvc, convSvc, convRepo)
 
 	// 11. 启动后台 schedule job（依赖已全部就绪）

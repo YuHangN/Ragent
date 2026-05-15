@@ -68,7 +68,8 @@ func newTestChat(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, 
 	t.Helper()
 	repo := newMockRepo()
 	conv := NewConversationService(repo)
-	return NewChatService(conv, rag, llm), repo
+	// recorder 传 nil → NewChatService 内部退化为 noopRecorder，测试不关心 trace 落库。
+	return NewChatService(conv, rag, llm, nil), repo
 }
 
 // fixedChunks 是用例共用的两条假 chunk，模拟 RAG 召回。

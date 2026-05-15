@@ -2,14 +2,16 @@
 //
 // 本文件提供 ChatService，把"会话历史 + RAG 检索 + LLM 调用"三者串成一条链路。
 // 它通过两个最小接口分别接 RAG 与 LLM，而不是直接引用具体类型，方便单元测试时
-// 把外部副作用替换成 mock。
+// 把外部副作用替换成 mock。每次问答还会把耗时与结果汇总成一条 trace 记录。
 package conversation
 
 import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
+	"github.com/YuHangN/ragent-go/internal/admin"
 	"github.com/YuHangN/ragent-go/internal/rag"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
@@ -32,28 +34,34 @@ type ragRetriever interface {
 // ChatService 串联会话历史、RAG 检索与 LLM 调用。
 //
 // 它本身不持有任何全局状态，所有持久化操作委托给 ConversationService，
-// RAG 与 LLM 通过注入的接口调用。这种依赖结构让测试可以独立验证业务规则，
-// 不需要真正的 DB / 向量库 / 模型。
+// RAG 与 LLM 通过注入的接口调用。recorder 用于把每次问答的耗时/结果落 trace，
+// 走 noopRecorder 时等价于不记。
 type ChatService struct {
-	conv *ConversationService
-	rag  ragRetriever
-	llm  aiclient.LLMService
+	conv     *ConversationService
+	rag      ragRetriever
+	llm      aiclient.LLMService
+	recorder admin.TraceRecorder
 }
 
 // NewChatService 构造 ChatService。
 //
 // 生产路径在 main.go 里传入 *rag.RAGCoreService 和 routingLLMService；
-// 单元测试里传入 mock 实现即可。
-func NewChatService(conv *ConversationService, ragSvc ragRetriever, llm aiclient.LLMService) *ChatService {
-	return &ChatService{conv: conv, rag: ragSvc, llm: llm}
+// recorder 传 nil 时退化为 noopRecorder，调用方主路径不必判空。
+func NewChatService(conv *ConversationService, ragSvc ragRetriever, llm aiclient.LLMService, recorder admin.TraceRecorder) *ChatService {
+	if recorder == nil {
+		recorder = admin.NewNoopRecorder()
+	}
+	return &ChatService{conv: conv, rag: ragSvc, llm: llm, recorder: recorder}
 }
 
 // SendRequest 是 SendMessage / StreamMessage 共用入参。
 //
 // TopK 为 0 时由 RAGCoreService 内部兜底（默认 5）。KbIDs 为空表示纯系统问答，
 // RAG 链路会走 SYSTEM 短路或全局兜底，由 Phase 6 内部决定。
+// UserID 仅用于 trace 归属，不参与业务逻辑。
 type SendRequest struct {
 	ConversationID int64
+	UserID         int64
 	Question       string
 	KbIDs          []int64
 	TopK           int
@@ -78,38 +86,56 @@ type SendResponse struct {
 //
 // 失败策略：第 3、4 步任意一步出错都直接返回，user 消息保留在 DB（"用户问过
 // 这一句的事实"应当存档），但不写 assistant 消息——半成品答案会污染未来历史。
-// 调用方拿到 err 自行决定前端如何提示。
+//
+// 无论成功失败，defer 都会落一条 trace：阶段耗时按实际到达的步骤填，未到达的
+// 阶段保持 0。
 func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendResponse, error) {
+	tr := newTraceBuilder(req)
+	defer func() { s.recorder.Record(tr.build()) }()
+
+	histStart := time.Now()
 	history, err := s.conv.LoadHistory(req.ConversationID, historyMaxMessages)
+	tr.historyMs = msSince(histStart)
 	if err != nil {
+		tr.markError(err)
 		return nil, err
 	}
 
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleUser, req.Question, ""); err != nil {
+		tr.markError(err)
 		return nil, err
 	}
 
+	ragStart := time.Now()
 	retrieved, err := s.rag.Retrieve(ctx, rag.RetrieveRequest{
 		KbIDs:    req.KbIDs,
 		Question: req.Question,
 		History:  history,
 		TopK:     req.TopK,
 	})
+	tr.ragMs = msSince(ragStart)
 	if err != nil {
+		tr.markError(err)
 		return nil, err
 	}
+	tr.fillFromRetrieve(retrieved)
 
+	llmStart := time.Now()
 	answer, err := s.llm.Chat(ctx, aiclient.ChatRequest{Messages: retrieved.Messages})
+	tr.llmMs = msSince(llmStart)
 	if err != nil {
+		tr.markError(err)
 		return nil, err
 	}
 
 	// chunks 序列化失败时只丢空串，不阻塞答案返回。
 	chunksJSON, _ := json.Marshal(retrieved.Chunks)
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleAssistant, answer, string(chunksJSON)); err != nil {
+		tr.markError(err)
 		return nil, err
 	}
 
+	tr.markSuccess()
 	return &SendResponse{Answer: answer, Chunks: retrieved.Chunks}, nil
 }
 
@@ -133,33 +159,50 @@ type StreamCallback interface {
 // 失败策略与 SendMessage 一致：任何前置步骤或 LLM 失败都不写 assistant 消息，
 // 保留干净的对话历史；err 已经通过 cb.OnError 通知给 HTTP 层，函数同时返回
 // 该 err 让调用方可以记日志。
+//
+// trace：defer 落一条记录，与 SendMessage 同样的阶段计时口径。
 func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb StreamCallback) error {
+	tr := newTraceBuilder(req)
+	defer func() { s.recorder.Record(tr.build()) }()
+
+	histStart := time.Now()
 	history, err := s.conv.LoadHistory(req.ConversationID, historyMaxMessages)
+	tr.historyMs = msSince(histStart)
 	if err != nil {
+		tr.markError(err)
 		cb.OnError(err)
 		return err
 	}
 
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleUser, req.Question, ""); err != nil {
+		tr.markError(err)
 		cb.OnError(err)
 		return err
 	}
 
+	ragStart := time.Now()
 	retrieved, err := s.rag.Retrieve(ctx, rag.RetrieveRequest{
 		KbIDs:    req.KbIDs,
 		Question: req.Question,
 		History:  history,
 		TopK:     req.TopK,
 	})
+	tr.ragMs = msSince(ragStart)
 	if err != nil {
+		tr.markError(err)
 		cb.OnError(err)
 		return err
 	}
+	tr.fillFromRetrieve(retrieved)
 
 	bridge := &streamBridge{cb: cb}
-	if err := s.llm.StreamChat(ctx, aiclient.ChatRequest{Messages: retrieved.Messages}, bridge); err != nil {
+	llmStart := time.Now()
+	err = s.llm.StreamChat(ctx, aiclient.ChatRequest{Messages: retrieved.Messages}, bridge)
+	tr.llmMs = msSince(llmStart)
+	if err != nil {
 		// aiclient.LLMService.StreamChat 内部已调用 bridge.OnError；这里只需把
 		// 错误向上抛，不重复发 cb.OnError，避免前端收到两条 error event。
+		tr.markError(err)
 		return err
 	}
 
@@ -167,9 +210,12 @@ func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb Str
 	chunksJSON, _ := json.Marshal(retrieved.Chunks)
 	answer := bridge.answer.String()
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleAssistant, answer, string(chunksJSON)); err != nil {
+		tr.markError(err)
 		cb.OnError(err)
 		return err
 	}
+
+	tr.markSuccess()
 	cb.OnComplete(answer, retrieved.Chunks)
 	return nil
 }
@@ -200,4 +246,65 @@ func (b *streamBridge) OnComplete() {}
 
 func (b *streamBridge) OnError(err error) {
 	b.cb.OnError(err)
+}
+
+// ──── trace 累加器 ───────────────────────────────────────
+
+// traceBuilder 是 SendMessage / StreamMessage 共用的 trace 累加器。
+//
+// 它在请求开始时记录起点，过程中分段填阶段耗时与结果字段，最后由 build()
+// 算出总耗时并产出 *admin.TraceRecord。设计成"逐步填充"是为了配合 defer：
+// 无论链路在哪一步失败，defer 都能拿到当前已填的部分。
+type traceBuilder struct {
+	startTime time.Time
+	record    *admin.TraceRecord
+	historyMs int64
+	ragMs     int64
+	llmMs     int64
+}
+
+// newTraceBuilder 用请求入参初始化累加器。Success 默认 0（失败），只有显式
+// markSuccess 才置 1——这样任何中途 return 都自然记为失败。
+func newTraceBuilder(req SendRequest) *traceBuilder {
+	return &traceBuilder{
+		startTime: time.Now(),
+		record: &admin.TraceRecord{
+			ConversationID: req.ConversationID,
+			UserID:         req.UserID,
+			Question:       req.Question,
+		},
+	}
+}
+
+// fillFromRetrieve 把 RAG 检索结果的关键字段抄进 trace。
+func (b *traceBuilder) fillFromRetrieve(r *rag.RetrieveResult) {
+	b.record.RewrittenQuery = r.RewrittenQuery
+	if data, err := json.Marshal(r.SubQuestions); err == nil {
+		b.record.SubQuestionsJSON = string(data)
+	}
+	b.record.ChunksCount = len(r.Chunks)
+}
+
+// markError 记录失败原因；Success 保持 0。
+func (b *traceBuilder) markError(err error) {
+	b.record.ErrorMessage = err.Error()
+}
+
+// markSuccess 把 trace 标记为成功。
+func (b *traceBuilder) markSuccess() {
+	b.record.Success = 1
+}
+
+// build 填入阶段耗时与总耗时，产出最终 trace 记录。
+func (b *traceBuilder) build() *admin.TraceRecord {
+	b.record.HistoryMs = b.historyMs
+	b.record.RagMs = b.ragMs
+	b.record.LLMMs = b.llmMs
+	b.record.TotalMs = msSince(b.startTime)
+	return b.record
+}
+
+// msSince 返回从 t 到现在的毫秒数。
+func msSince(t time.Time) int64 {
+	return time.Since(t).Milliseconds()
 }

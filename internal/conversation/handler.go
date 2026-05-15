@@ -159,6 +159,7 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 // 一次请求阻塞到 LLM 出完整答案。适合短答案场景或不需要流式 UI 的客户端。
 // 流式答案走 ChatStream。
 func (h *Handler) Chat(c *gin.Context) {
+	uid := requireUserID(c)
 	var req ChatRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
@@ -172,6 +173,7 @@ func (h *Handler) Chat(c *gin.Context) {
 
 	resp, err := h.chat.SendMessage(c.Request.Context(), SendRequest{
 		ConversationID: convID,
+		UserID:         uid,
 		Question:       req.Question,
 		KbIDs:          parseInt64Slice(req.KbIDs),
 		TopK:           req.TopK,
@@ -204,6 +206,7 @@ func (h *Handler) Chat(c *gin.Context) {
 // 客户端断连时 c.Request.Context() 自动 cancel，ChatService.StreamMessage
 // 内部的 LLM 流也会随之停止，无需 handler 手动检测。
 func (h *Handler) ChatStream(c *gin.Context) {
+	uid := requireUserID(c)
 	var req ChatRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
@@ -228,10 +231,22 @@ func (h *Handler) ChatStream(c *gin.Context) {
 	// 不会再处理，因为 response body 已经开始写 SSE 流，不能再回 JSON 错误）。
 	_ = h.chat.StreamMessage(c.Request.Context(), SendRequest{
 		ConversationID: convID,
+		UserID:         uid,
 		Question:       req.Question,
 		KbIDs:          parseInt64Slice(req.KbIDs),
 		TopK:           req.TopK,
 	}, cb)
+}
+
+// requireUserID 从 gin.Context 取当前登录用户 ID 并解析成 int64。
+//
+// usercontext.Require 在未登录时 panic（由 Recovery middleware 转 401），
+// 所以这里不会拿到 nil；UserID 解析失败返回 0——trace 归属用，0 表示"未知用户"，
+// 不阻断 chat 主流程。
+func requireUserID(c *gin.Context) int64 {
+	user := usercontext.Require(c)
+	uid, _ := strconv.ParseInt(user.UserID, 10, 64)
+	return uid
 }
 
 // sseCallback 把 ChatService.StreamCallback 翻译成 SSE event。

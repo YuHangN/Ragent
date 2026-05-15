@@ -132,3 +132,7 @@ ingestion:
   local:
     allowed-roots:
       - "/tmp/ragent-uploads"
+  enrichment:
+    enhancer-enabled: false   # 文档级 LLM 增强，默认关（有 LLM 调用成本）
+    enricher-enabled: false   # chunk 级 LLM 增强，默认关
+    concurrency: 4            # Enricher 并发 LLM 调用上限

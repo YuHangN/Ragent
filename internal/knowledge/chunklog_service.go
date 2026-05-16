@@ -21,7 +21,7 @@ func NewChunkLogService(repo ChunkLogRepo) *ChunkLogService {
 func (s *ChunkLogService) StartLog(docID int64, processMode, chunkStrategy string) (int64, error) {
 	l := &KnowledgeDocumentChunkLog{
 		DocID:         docID,
-		Status:        string(ScheduleRunning), // 复用 running 字面量
+		Status:        "running",
 		ProcessMode:   processMode,
 		ChunkStrategy: chunkStrategy,
 		StartTime:     time.Now(),
@@ -34,7 +34,7 @@ func (s *ChunkLogService) StartLog(docID int64, processMode, chunkStrategy strin
 }
 
 func (s *ChunkLogService) FinishSuccess(logID int64, chunkCount int, totalMs int64) error {
-	return s.finish(logID, string(ScheduleSuccess), chunkCount, "", 0, 0, 0, totalMs)
+	return s.finish(logID, "success", chunkCount, "", 0, 0, 0, totalMs)
 }
 
 func (s *ChunkLogService) FinishSuccessDetailed(
@@ -43,11 +43,11 @@ func (s *ChunkLogService) FinishSuccessDetailed(
 	extractMs, chunkMs, embeddingMs int64,
 ) error {
 	total := extractMs + chunkMs + embeddingMs
-	return s.finish(logID, string(ScheduleSuccess), chunkCount, "", extractMs, chunkMs, embeddingMs, total)
+	return s.finish(logID, "success", chunkCount, "", extractMs, chunkMs, embeddingMs, total)
 }
 
 func (s *ChunkLogService) FinishFailed(logID int64, errMsg string, totalMs int64) error {
-	return s.finish(logID, string(ScheduleFailed), 0, errMsg, 0, 0, 0, totalMs)
+	return s.finish(logID, "failed", 0, errMsg, 0, 0, 0, totalMs)
 }
 
 func (s *ChunkLogService) finish(

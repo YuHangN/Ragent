@@ -21,6 +21,13 @@ type ChunkProcessor interface {
 	ProcessDocument(ctx context.Context, docID int64) error
 }
 
+// DocScheduler 是 schedule.Service 的 abstraction——只列 DocService 真正用到的方法，
+// 让 knowledge 不必 import schedule（避免双向依赖 schedule → knowledge → schedule）。
+// 实际实现由 main.go 注入 *schedule.Service，通过 Go 结构化类型自动满足。
+type DocScheduler interface {
+	ReconcileDoc(doc *KnowledgeDocument) error
+}
+
 // DocService 处理文档上传、分页、删除、分块触发。
 type DocService struct {
 	docRepo        DocRepo
@@ -29,11 +36,11 @@ type DocService struct {
 	s3             *s3.Client
 	httpFetcher    *fetcher.HTTPFetcher
 	chunkProcessor ChunkProcessor // Phase 5 注入
-	schedule       *ScheduleService
+	scheduler      DocScheduler
 }
 
-func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, httpFetcher *fetcher.HTTPFetcher, scheduleSvc *ScheduleService) *DocService {
-	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, httpFetcher: httpFetcher, schedule: scheduleSvc}
+func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, httpFetcher *fetcher.HTTPFetcher, scheduler DocScheduler) *DocService {
+	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, httpFetcher: httpFetcher, scheduler: scheduler}
 }
 
 // SetChunkProcessor Phase 5 完成后由 main.go 调用注入实际处理器。
@@ -133,7 +140,7 @@ func (s *DocService) Upload(
 		return nil, err
 	}
 
-	if err := s.schedule.Reconcile(doc); err != nil {
+	if err := s.scheduler.ReconcileDoc(doc); err != nil {
 		return nil, err
 	}
 

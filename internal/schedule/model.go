@@ -1,4 +1,4 @@
-package knowledge
+package schedule
 
 import (
 	"time"
@@ -7,10 +7,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// KnowledgeDocumentSchedule 对应 Java KnowledgeDocumentScheduleDO。
-// 表名 t_knowledge_document_schedule。
+// DocumentSchedule 对应 t_knowledge_document_schedule。
 // 每个启用定时拉取的 URL 文档对应一条记录。
-type KnowledgeDocumentSchedule struct {
+type DocumentSchedule struct {
 	ID              int64      `gorm:"primaryKey"`
 	DocID           int64      `gorm:"column:doc_id;uniqueIndex"`
 	KbID            int64      `gorm:"column:kb_id;index"`
@@ -30,18 +29,18 @@ type KnowledgeDocumentSchedule struct {
 	UpdatedAt       time.Time  `gorm:"column:update_time;autoUpdateTime"`
 }
 
-func (KnowledgeDocumentSchedule) TableName() string { return "t_knowledge_document_schedule" }
+func (DocumentSchedule) TableName() string { return "t_knowledge_document_schedule" }
 
-func (s *KnowledgeDocumentSchedule) BeforeCreate(_ *gorm.DB) error {
+func (s *DocumentSchedule) BeforeCreate(_ *gorm.DB) error {
 	if s.ID == 0 {
 		s.ID = idgen.NewID()
 	}
 	return nil
 }
 
-// KnowledgeDocumentScheduleExec 对应 Java KnowledgeDocumentScheduleExecDO。
+// ExecRecord 对应 t_knowledge_document_schedule_exec。
 // 每次定时执行留下一条记录，用于运维排查。
-type KnowledgeDocumentScheduleExec struct {
+type ExecRecord struct {
 	ID           int64      `gorm:"primaryKey"`
 	ScheduleID   int64      `gorm:"column:schedule_id;index"`
 	DocID        int64      `gorm:"column:doc_id;index"`
@@ -59,9 +58,9 @@ type KnowledgeDocumentScheduleExec struct {
 	UpdatedAt    time.Time  `gorm:"column:update_time;autoUpdateTime"`
 }
 
-func (KnowledgeDocumentScheduleExec) TableName() string { return "t_knowledge_document_schedule_exec" }
+func (ExecRecord) TableName() string { return "t_knowledge_document_schedule_exec" }
 
-func (e *KnowledgeDocumentScheduleExec) BeforeCreate(_ *gorm.DB) error {
+func (e *ExecRecord) BeforeCreate(_ *gorm.DB) error {
 	if e.ID == 0 {
 		e.ID = idgen.NewID()
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/schedule"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
@@ -86,13 +87,13 @@ func main() {
 	kbRepo := knowledge.NewKBRepo(gormDB)
 	docRepo := knowledge.NewDocRepo(gormDB)
 	chunkRepo := knowledge.NewChunkRepo(gormDB)
-	scheduleRepo := knowledge.NewScheduleRepo(gormDB)
+	scheduleRepo := schedule.NewRepo(gormDB)
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
 
 	// 7. 知识库模块：Services
 	httpFetcher := fetcher.NewHTTPFetcher(s3Client)
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
-	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
+	scheduleSvc := schedule.NewService(scheduleRepo)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, httpFetcher, scheduleSvc)
 	chunkSvc := knowledge.NewChunkService(chunkRepo, docRepo, tokenCounter)
 	chunkLogSvc := knowledge.NewChunkLogService(chunkLogRepo)
@@ -182,12 +183,12 @@ func main() {
 	chatHandler := conversation.NewHandler(chatSvc, convSvc, convRepo)
 
 	// 11. 启动后台 schedule job（依赖已全部就绪）
-	scheduleProc := knowledge.ScheduleDocProcessorFunc(func(_ context.Context, docID int64) error {
+	scheduleProc := schedule.DocProcessorFunc(func(_ context.Context, docID int64) error {
 		zap.L().Info("schedule process doc", zap.Int64("docID", docID))
 		return docSvc.StartChunk(fmt.Sprintf("%d", docID))
 	})
 
-	scheduleJob := knowledge.NewScheduleJob(scheduleRepo, docRepo, kbRepo, httpFetcher, scheduleProc, knowledge.ScheduleJobConfig{
+	scheduleJob := schedule.NewJob(scheduleRepo, docRepo, kbRepo, httpFetcher, scheduleProc, schedule.JobConfig{
 		Owner:        fmt.Sprintf("ragent-go-%s-%d", hostname(), time.Now().UnixNano()),
 		LockSeconds:  cfg.RAG.Knowledge.Schedule.LockSeconds,
 		MaxFileBytes: cfg.RAG.Knowledge.Schedule.MaxFileSizeBytes,

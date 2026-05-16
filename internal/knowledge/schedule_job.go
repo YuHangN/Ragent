@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,7 @@ type ScheduleJob struct {
 	repo    ScheduleRepo
 	docRepo DocRepo
 	kbRepo  KBRepo
-	fetcher *HTTPFetcher
+	fetcher *fetcher.HTTPFetcher
 	proc    ScheduleDocProcessor
 	cfg     ScheduleJobConfig
 
@@ -46,7 +47,7 @@ type ScheduleJob struct {
 }
 
 // NewScheduleJob 构造。
-func NewScheduleJob(repo ScheduleRepo, docRepo DocRepo, kbRepo KBRepo, fetcher *HTTPFetcher, proc ScheduleDocProcessor, cfg ScheduleJobConfig) *ScheduleJob {
+func NewScheduleJob(repo ScheduleRepo, docRepo DocRepo, kbRepo KBRepo, fetcher *fetcher.HTTPFetcher, proc ScheduleDocProcessor, cfg ScheduleJobConfig) *ScheduleJob {
 	if cfg.LockSeconds <= 0 {
 		cfg.LockSeconds = 900
 	}

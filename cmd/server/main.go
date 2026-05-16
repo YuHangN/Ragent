@@ -90,7 +90,7 @@ func main() {
 	chunkLogRepo := knowledge.NewChunkLogRepo(gormDB)
 
 	// 7. 知识库模块：Services
-	httpFetcher := knowledge.NewHTTPFetcher(s3Client)
+	httpFetcher := fetcher.NewHTTPFetcher(s3Client)
 	kbSvc := knowledge.NewKBService(kbRepo, docRepo, s3Client, milvusClient)
 	scheduleSvc := knowledge.NewScheduleService(scheduleRepo)
 	docSvc := knowledge.NewDocService(docRepo, kbRepo, chunkRepo, s3Client, httpFetcher, scheduleSvc)

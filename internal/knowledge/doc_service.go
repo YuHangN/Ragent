@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,12 +27,12 @@ type DocService struct {
 	kbRepo         KBRepo
 	chunkRepo      ChunkRepo
 	s3             *s3.Client
-	httpFetcher    *HTTPFetcher
+	httpFetcher    *fetcher.HTTPFetcher
 	chunkProcessor ChunkProcessor // Phase 5 注入
 	schedule       *ScheduleService
 }
 
-func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, httpFetcher *HTTPFetcher, scheduleSvc *ScheduleService) *DocService {
+func NewDocService(docRepo DocRepo, kbRepo KBRepo, chunkRepo ChunkRepo, s3Client *s3.Client, httpFetcher *fetcher.HTTPFetcher, scheduleSvc *ScheduleService) *DocService {
 	return &DocService{docRepo: docRepo, kbRepo: kbRepo, chunkRepo: chunkRepo, s3: s3Client, httpFetcher: httpFetcher, schedule: scheduleSvc}
 }
 

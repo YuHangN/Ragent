@@ -229,6 +229,14 @@ func (s *DocService) Update(docIDStr string, req DocUpdateRequest, operator stri
 	if err := s.docRepo.Update(doc); err != nil {
 		return apperror.NewServiceWrap("更新文档失败", err, nil)
 	}
+
+	// schedule 字段被改时（开关 / cron），同步把 schedule 表也调一下：
+	// 关闭时把现存记录置 Enabled=0；开启时 Upsert 新的 NextRunTime。
+	if req.ScheduleEnabled != nil || req.ScheduleCron != nil {
+		if err := s.scheduler.ReconcileDoc(doc); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

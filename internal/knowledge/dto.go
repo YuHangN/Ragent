@@ -27,6 +27,7 @@ type DocUploadRequest struct {
 	ScheduleCron    string `form:"scheduleCron"`
 	ChunkStrategy   string `form:"chunkStrategy"`
 	ChunkConfig     string `form:"chunkConfig"`
+	TargetPartition string `form:"targetPartition"` // 空 / _default 走 collection 默认分区
 }
 
 type DocUpdateRequest struct {
@@ -36,6 +37,7 @@ type DocUpdateRequest struct {
 	ProcessMode     *string `json:"processMode"`
 	ChunkStrategy   *string `json:"chunkStrategy"`
 	ChunkConfig     *string `json:"chunkConfig"`
+	TargetPartition *string `json:"targetPartition"`
 }
 
 type DocPageRequest struct {

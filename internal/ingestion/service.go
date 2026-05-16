@@ -125,6 +125,7 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 	ic := &IngestionContext{
 		DocID:            docID,
 		KBCollectionName: collectionName,
+		PartitionName:    doc.TargetPartition, // 空 → indexer 走 _default
 		Source: &DocumentSource{
 			Type:     SourceTypeS3,
 			Location: doc.SourceLocation,

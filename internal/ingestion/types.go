@@ -34,6 +34,7 @@ type VectorChunk struct {
 type IngestionContext struct {
 	DocID            int64
 	KBCollectionName string // Milvus collection to write to
+	PartitionName    string // Milvus partition to write to；空 = collection 默认分区
 
 	Source   *DocumentSource
 	RawBytes []byte

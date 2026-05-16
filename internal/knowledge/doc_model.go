@@ -25,7 +25,8 @@ type KnowledgeDocument struct {
 	ChunkStrategy   string         `gorm:"column:chunk_strategy"`
 	ChunkConfig     string         `gorm:"column:chunk_config"`
 	PipelineID      *int64         `gorm:"column:pipeline_id"`
-	Status          string         `gorm:"column:status"` // pending/running/success/failed
+	Status          string         `gorm:"column:status"`            // pending/running/success/failed
+	TargetPartition string         `gorm:"column:target_partition"`  // Milvus partition 名；空 / _default 走 collection 默认分区
 	CreatedBy       string         `gorm:"column:created_by"`
 	UpdatedBy       string         `gorm:"column:updated_by"`
 	CreatedAt       time.Time      `gorm:"column:create_time;autoCreateTime"`
@@ -58,6 +59,7 @@ type KnowledgeDocumentVO struct {
 	FileSize        int64     `json:"fileSize"`
 	ProcessMode     string    `json:"processMode"`
 	Status          string    `json:"status"`
+	TargetPartition string    `json:"targetPartition,omitempty"`
 	CreatedAt       time.Time `json:"createTime"`
 	UpdatedAt       time.Time `json:"updateTime"`
 }

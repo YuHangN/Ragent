@@ -57,7 +57,7 @@ func (h *DocHandler) UploadDoc(c *gin.Context) {
 		kbID,
 		req.SourceType, req.SourceLocation,
 		req.ProcessMode, req.ScheduleCron,
-		req.ChunkStrategy, req.ChunkConfig,
+		req.ChunkStrategy, req.ChunkConfig, req.TargetPartition,
 		req.ScheduleEnabled,
 		reader, fileName, fileSize,
 		usercontext.Username(c),

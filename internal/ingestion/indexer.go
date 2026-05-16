@@ -64,10 +64,15 @@ func (n *IndexerNode) Execute(ctx context.Context, ic *IngestionContext) NodeRes
 		entity.NewColumnFloatVector("embedding", dim, embeddings),
 	}
 
-	_, err := n.milvus.Insert(ctx, ic.KBCollectionName, "", cols...)
+	// 空 PartitionName 让 Milvus 走 _default 系统分区，与未启用 Phase 6.7 时行为一致。
+	_, err := n.milvus.Insert(ctx, ic.KBCollectionName, ic.PartitionName, cols...)
 	if err != nil {
-		return Fail(fmt.Errorf("indexer: Milvus insert into %s: %w", ic.KBCollectionName, err))
+		return Fail(fmt.Errorf("indexer: Milvus insert into %s/%s: %w", ic.KBCollectionName, ic.PartitionName, err))
 	}
 
-	return OK(fmt.Sprintf("indexed %d chunks into collection %s", len(ic.Chunks), ic.KBCollectionName))
+	partLabel := ic.PartitionName
+	if partLabel == "" {
+		partLabel = "_default"
+	}
+	return OK(fmt.Sprintf("indexed %d chunks into collection %s partition %s", len(ic.Chunks), ic.KBCollectionName, partLabel))
 }

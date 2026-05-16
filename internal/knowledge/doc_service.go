@@ -41,7 +41,7 @@ func (s *DocService) SetChunkProcessor(p ChunkProcessor) { s.chunkProcessor = p 
 // Upload 保存文档元数据并把文件上传到 S3（URL 来源则只记录元数据）。
 // file 为 nil 时表示 URL 类型来源。
 func (s *DocService) Upload(
-	kbIDStr, sourceType, sourceLocation, processMode, scheduleCron, chunkStrategy, chunkConfig string,
+	kbIDStr, sourceType, sourceLocation, processMode, scheduleCron, chunkStrategy, chunkConfig, targetPartition string,
 	scheduleEnabled bool,
 	file io.Reader, fileName string, fileSize int64,
 	operator string,
@@ -124,6 +124,7 @@ func (s *DocService) Upload(
 		ChunkStrategy:   chunkStrategy,
 		ChunkConfig:     chunkConfig,
 		Status:          DocStatusPending.String(),
+		TargetPartition: targetPartition,
 		CreatedBy:       operator,
 		UpdatedBy:       operator,
 	}
@@ -211,6 +212,9 @@ func (s *DocService) Update(docIDStr string, req DocUpdateRequest, operator stri
 	}
 	if req.ChunkConfig != nil {
 		doc.ChunkConfig = *req.ChunkConfig
+	}
+	if req.TargetPartition != nil {
+		doc.TargetPartition = *req.TargetPartition
 	}
 	doc.UpdatedBy = operator
 
@@ -311,6 +315,7 @@ func toDocVO(d KnowledgeDocument) *KnowledgeDocumentVO {
 		FileSize:        d.FileSize,
 		ProcessMode:     d.ProcessMode,
 		Status:          d.Status,
+		TargetPartition: d.TargetPartition,
 		CreatedAt:       d.CreatedAt,
 		UpdatedAt:       d.UpdatedAt,
 	}

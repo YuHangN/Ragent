@@ -118,8 +118,9 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 	}
 
 	type searchRes struct {
-		chunks []RetrievedChunk
-		err    error
+		subQuestion string
+		chunks      []RetrievedChunk
+		err         error
 	}
 	resCh := make(chan searchRes, len(tasks))
 	var wg sync.WaitGroup
@@ -138,14 +139,14 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 			}
 			chunks, err := c.retriever.Search(ctx, col, partitions, task.subQuestion, topKPerIntent)
 			if err != nil {
-				resCh <- searchRes{err: err}
+				resCh <- searchRes{subQuestion: task.subQuestion, err: err}
 				return
 			}
 			// 将 KbID 注入 chunk（Milvus 只存 doc_id，kb_id 从 intent 补充）
 			for i := range chunks {
 				chunks[i].KbID = task.intent.KbID
 			}
-			resCh <- searchRes{chunks: chunks}
+			resCh <- searchRes{subQuestion: task.subQuestion, chunks: chunks}
 		}()
 	}
 
@@ -153,11 +154,25 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 	close(resCh)
 
 	var all []RetrievedChunk
+	// hits 记录每个子问题在本通道实际命中的 chunk 数。engine 据此推导 fall-through
+	// 兜底——同一子问题可能拆成多个 task（多个意图），命中数累加。
+	hits := make(map[string]int)
+	// touched 记录"本通道为该子问题至少跑了一次检索"——即使 0 命中也要落 0
+	// 进 hits，让 engine 能区分"通道没碰过这个子问题"和"通道碰过但查空"。
+	touched := make(map[string]bool)
 	for res := range resCh {
+		touched[res.subQuestion] = true
 		if res.err != nil {
 			continue // 单个任务失败不阻断整体
 		}
 		all = append(all, res.chunks...)
+		hits[res.subQuestion] += len(res.chunks)
+	}
+	// 把 touched 但还没记 hits 的子问题显式填 0
+	for sq := range touched {
+		if _, ok := hits[sq]; !ok {
+			hits[sq] = 0
+		}
 	}
 
 	// 用所有任务的意图平均分作为通道置信度（rerank 会做最终排序，这里粗算即可）
@@ -170,10 +185,11 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 	}
 
 	return SearchChannelResult{
-		ChannelName: c.Name(),
-		Priority:    c.Priority(),
-		Chunks:      all,
-		Confidence:  avgScore,
+		ChannelName:        c.Name(),
+		Priority:           c.Priority(),
+		Chunks:             all,
+		Confidence:         avgScore,
+		PerSubQuestionHits: hits,
 	}, nil
 }
 
@@ -288,8 +304,13 @@ func (c *VectorGlobalChannel) IsEnabled(sc SearchContext) bool {
 		if !c.isSubQuestionCovered(sq) {
 			return true
 		}
+		// Phase 6.7.1：前一 tier 应该查到却空了（典型场景：intent 高分但 partition
+		// 没数据，因为文档没填 targetPartition 进了 _default）→ 由本通道兜底。
+		if sc.PriorTierEmptySubQuestions[sq.SubQuestion] {
+			return true
+		}
 	}
-	return false // 所有子问题都被高置信度意图覆盖
+	return false // 所有子问题都被高置信度意图覆盖且前一 tier 实际命中
 }
 
 // isSubQuestionCovered 判断子问题是否已有高置信度 KB 意图负责检索。
@@ -425,7 +446,13 @@ func (c *VectorGlobalChannel) uncoveredQueries(sc SearchContext) []string {
 	}
 	var queries []string
 	for _, sq := range sc.SubIntents {
+		// 未被高置信度 KB 意图覆盖 → 兜底要查
 		if !c.isSubQuestionCovered(sq) {
+			queries = append(queries, sq.SubQuestion)
+			continue
+		}
+		// Phase 6.7.1：被高置信度覆盖但前一 tier 实际查空 → 也要兜底
+		if sc.PriorTierEmptySubQuestions[sq.SubQuestion] {
 			queries = append(queries, sq.SubQuestion)
 		}
 	}

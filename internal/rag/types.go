@@ -77,6 +77,12 @@ type SearchContext struct {
 	SubIntents   []SubQuestionIntent
 	IntentGroup  IntentGroup
 	TopK         int
+	// PriorTierEmptySubQuestions：由 engine 在 priority tier 间填充。
+	// 列出"前面 tier 的 KB 意图通道应该查、但实际查空"的子问题。VectorGlobal
+	// 据此把这些子问题视作未覆盖触发兜底——修 Phase 6.7.1 的失败场景：
+	// 文档没填 targetPartition 进了 _default，但 intent 高分让 IntentDirected
+	// 去查空 partition。
+	PriorTierEmptySubQuestions map[string]bool
 }
 
 // SearchChannelResult 是单个检索通道的输出。
@@ -85,6 +91,9 @@ type SearchChannelResult struct {
 	Priority    int
 	Chunks      []RetrievedChunk
 	Confidence  float64 // 该通道结果的置信度，去重时优先保留高置信度通道的结果
+	// PerSubQuestionHits 记录每个子问题在该通道实际命中的 chunk 数。
+	// engine 据此推导下一 tier 的 PriorTierEmptySubQuestions，驱动 fall-through 兜底。
+	PerSubQuestionHits map[string]int
 }
 
 // ──── 接口 ────────────────────────────────────────────────

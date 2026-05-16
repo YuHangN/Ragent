@@ -7,6 +7,7 @@ package rag
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/YuHangN/ragent-go/pkg/response"
@@ -61,6 +62,13 @@ func (h *IntentHandler) CreateIntentNode(c *gin.Context) {
 	var req intentNodeCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(apperror.NewClientMsg("请求参数错误"))
+		return
+	}
+
+	// Kind=KB 必须指定 partition——否则 ingestion 不知道把 chunk 写到哪个 partition，
+	// channel 检索也无法精准缩范围。其它 Kind 不强制（SYSTEM 不查询，MCP 走外部工具）。
+	if req.Kind == IntentKindKB && strings.TrimSpace(req.PartitionName) == "" {
+		_ = c.Error(apperror.NewClientMsg("Kind=KB 的意图节点必须指定 partitionName"))
 		return
 	}
 

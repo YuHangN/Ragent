@@ -129,14 +129,14 @@ func (c *IntentDirectedChannel) Search(ctx context.Context, sc SearchContext) (S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Phase 6.7 过渡期：T1 仅做字段重命名以保持编译通过；真正改成
-			// "collection=kb_{kbID}, partition=PartitionName" 是 T4 的工作。
-			// TODO(phase6.7-t4): 改造为 partition-aware 检索
-			col := task.intent.PartitionName
-			if col == "" {
-				col = knowledge.BuildCollectionName(task.intent.KbID)
+			// Phase 6.7：collection 永远是该 KB 的物理 collection；意图缩范围靠 partition。
+			// 空 PartitionName → partitions=nil → 扫该 collection 下所有 partition（兜底）。
+			col := knowledge.BuildCollectionName(task.intent.KbID)
+			var partitions []string
+			if task.intent.PartitionName != "" {
+				partitions = []string{task.intent.PartitionName}
 			}
-			chunks, err := c.retriever.Search(ctx, col, task.subQuestion, topKPerIntent)
+			chunks, err := c.retriever.Search(ctx, col, partitions, task.subQuestion, topKPerIntent)
 			if err != nil {
 				resCh <- searchRes{err: err}
 				return
@@ -351,7 +351,8 @@ func (c *VectorGlobalChannel) Search(ctx context.Context, sc SearchContext) (Sea
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			chunks, err := c.retriever.Search(ctx, task.collection, task.query, topKPerCol)
+			// VectorGlobal 兜底：partitions=nil 扫该 collection 下所有 partition。
+			chunks, err := c.retriever.Search(ctx, task.collection, nil, task.query, topKPerCol)
 			resCh <- searchRes{chunks: chunks, kbID: task.kbID, err: err}
 		}()
 	}

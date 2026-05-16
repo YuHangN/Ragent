@@ -20,7 +20,10 @@ func NewMilvusRetriever(milvus milvusclient.Client, embedding aiclient.Embedding
 }
 
 // Search 对单个集合执行向量搜索，返回 topK 条结果。
-func (r *MilvusRetriever) Search(ctx context.Context, collectionName, query string, topK int) ([]RetrievedChunk, error) {
+//
+// partitions 为 nil 或空时，Milvus 会扫描该 collection 下所有 partition（VectorGlobal
+// 兜底场景）。传入具体 partition 名时只在该 partition 内检索（IntentDirected 精准场景）。
+func (r *MilvusRetriever) Search(ctx context.Context, collectionName string, partitions []string, query string, topK int) ([]RetrievedChunk, error) {
 	// 1. 将查询文本转为向量
 	vecs, err := r.embedding.EmbedBatch(ctx, []string{query})
 	if err != nil {
@@ -42,7 +45,7 @@ func (r *MilvusRetriever) Search(ctx context.Context, collectionName, query stri
 	results, err := r.milvus.Search(
 		ctx,
 		collectionName,
-		[]string{},                          // partitions（空=全部）
+		partitions,                          // 空 = 该 collection 下所有 partition
 		"",                                  // expr 过滤（空=不过滤）
 		[]string{"id", "doc_id", "content"}, // 返回字段
 		[]entity.Vector{queryVec},

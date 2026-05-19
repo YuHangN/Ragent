@@ -246,6 +246,11 @@ func (s *DocService) Delete(docIDStr string) error {
 	if err != nil {
 		return errors.New("文档ID非法")
 	}
+	// 先把 schedule 记录置 Enabled=0；找不到 doc 时直接走删除，由 docRepo 决定如何处理。
+	if doc, err := s.docRepo.FindByID(docID); err == nil {
+		doc.ScheduleEnabled = 0
+		_ = s.scheduler.ReconcileDoc(doc)
+	}
 	return s.docRepo.Delete(docID)
 }
 
@@ -261,7 +266,15 @@ func (s *DocService) Enable(docIDStr string, enabled bool, operator string) erro
 	}
 	doc.Enabled = boolToInt(enabled)
 	doc.UpdatedBy = operator
-	return s.docRepo.Update(doc)
+	if err := s.docRepo.Update(doc); err != nil {
+		return apperror.NewServiceWrap("更新文档失败", err, nil)
+	}
+	// doc.Enabled=0 时强制把 schedule 也关掉；=1 时按 doc 自身的 ScheduleEnabled 重建。
+	scheduleDoc := *doc
+	if !enabled {
+		scheduleDoc.ScheduleEnabled = 0
+	}
+	return s.scheduler.ReconcileDoc(&scheduleDoc)
 }
 
 // Page 分页查询文档。

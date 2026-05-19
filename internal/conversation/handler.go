@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/pkg/apperror"
 	"github.com/YuHangN/ragent-go/pkg/response"
 	"github.com/YuHangN/ragent-go/pkg/usercontext"
@@ -265,7 +265,7 @@ func (s *sseCallback) OnDelta(delta string) {
 // OnComplete 推 done 事件，携带完整答案 + 召回的 chunks。
 //
 // 前端可以直接拿完整 answer 作为校验（与累积 delta 对比），也可以渲染引用列表。
-func (s *sseCallback) OnComplete(answer string, chunks []rag.RetrievedChunk) {
+func (s *sseCallback) OnComplete(answer string, chunks []retrieval.RetrievedChunk) {
 	writeSSE(s.w, "done", gin.H{
 		"answer": answer,
 		"chunks": toChunkDTOs(chunks),

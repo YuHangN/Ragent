@@ -17,7 +17,7 @@ import (
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
-	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/internal/schedule"
 	"github.com/YuHangN/ragent-go/internal/server"
 	"github.com/YuHangN/ragent-go/internal/user"
@@ -137,33 +137,33 @@ func main() {
 
 	// 10.5 RAG Core 服务：把 Phase 6 全套组件串成统一入口供 Phase 7 chat 调用。
 	// 整个链路：QueryRewrite → IntentResolver → MultiChannelEngine → Prompt。
-	intentRepo := rag.NewIntentRepo(gormDB)
-	retriever := rag.NewMilvusRetriever(milvusClient, embeddingService)
+	intentRepo := retrieval.NewIntentRepo(gormDB)
+	retriever := retrieval.NewMilvusRetriever(milvusClient, embeddingService)
 
-	rewriteSvc := rag.NewQueryRewriteService(llmService, cfg.RAG.QueryRewrite)
-	classifier := rag.NewIntentClassifier(llmService, intentRepo)
-	intentResolver := rag.NewIntentResolver(
+	rewriteSvc := retrieval.NewQueryRewriteService(llmService, cfg.RAG.QueryRewrite)
+	classifier := retrieval.NewIntentClassifier(llmService, intentRepo)
+	intentResolver := retrieval.NewIntentResolver(
 		classifier,
-		3,                                                     // 单子问题最多保留 3 个意图候选
+		3, // 单子问题最多保留 3 个意图候选
 		cfg.RAG.Search.Channels.IntentDirected.MinIntentScore, // 与 IntentDirected 通道复用同一阈值
 	)
 
-	dedupProc := &rag.DeduplicationProcessor{}
-	rerankProc := rag.NewRerankProcessor(rerankService)
+	dedupProc := &retrieval.DeduplicationProcessor{}
+	rerankProc := retrieval.NewRerankProcessor(rerankService)
 
-	intentDirectedCh := rag.NewIntentDirectedChannel(retriever, cfg.RAG.Search.Channels.IntentDirected)
-	vectorGlobalCh := rag.NewVectorGlobalChannel(retriever, kbRepo, cfg.RAG.Search.Channels.VectorGlobal)
+	intentDirectedCh := retrieval.NewIntentDirectedChannel(retriever, cfg.RAG.Search.Channels.IntentDirected)
+	vectorGlobalCh := retrieval.NewVectorGlobalChannel(retriever, kbRepo, cfg.RAG.Search.Channels.VectorGlobal)
 
-	ragEngine := rag.NewMultiChannelEngine(
-		[]rag.SearchChannel{intentDirectedCh, vectorGlobalCh},
-		[]rag.PostProcessor{dedupProc, rerankProc},
+	ragEngine := retrieval.NewMultiChannelEngine(
+		[]retrieval.SearchChannel{intentDirectedCh, vectorGlobalCh},
+		[]retrieval.PostProcessor{dedupProc, rerankProc},
 	)
-	promptSvc := rag.NewPromptService()
-	ragCoreSvc := rag.NewRAGCoreService(rewriteSvc, intentResolver, ragEngine, promptSvc, cfg.RAG)
+	promptSvc := retrieval.NewPromptService()
+	ragCoreSvc := retrieval.NewRAGCoreService(rewriteSvc, intentResolver, ragEngine, promptSvc, cfg.RAG)
 
 	// IntentHandler 同时持有 ragCoreSvc，用于 /api/ragent/rag/test-retrieve 调试端点；
 	// Phase 7 chat 上线后该端点保留作为运维工具。
-	intentHandler := rag.NewIntentHandler(intentRepo, ragCoreSvc)
+	intentHandler := retrieval.NewIntentHandler(intentRepo, ragCoreSvc)
 
 	// 10.6 RAG 链路追踪（Phase 8 MVP）：按配置决定是否真落库。
 	// cfg.RAG.Trace.Enabled=false 时用 noopRecorder，chat 主路径零开销。

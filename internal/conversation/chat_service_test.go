@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/YuHangN/ragent-go/internal/admin"
-	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,10 +19,10 @@ import (
 // onRetrieve 由用例设置，可以在调用时观察入参（验证 history / question 传递）或
 // 返回固定结果 / 错误。无副作用，每个用例新建一个实例。
 type mockRetriever struct {
-	onRetrieve func(req rag.RetrieveRequest) (*rag.RetrieveResult, error)
+	onRetrieve func(req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error)
 }
 
-func (m *mockRetriever) Retrieve(_ context.Context, req rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+func (m *mockRetriever) Retrieve(_ context.Context, req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 	return m.onRetrieve(req)
 }
 
@@ -48,14 +48,14 @@ type captureCallback struct {
 	deltas   []string
 	complete bool
 	answer   string
-	chunks   []rag.RetrievedChunk
+	chunks   []retrieval.RetrievedChunk
 	errs     []error
 }
 
 func (c *captureCallback) OnDelta(delta string) {
 	c.deltas = append(c.deltas, delta)
 }
-func (c *captureCallback) OnComplete(answer string, chunks []rag.RetrievedChunk) {
+func (c *captureCallback) OnComplete(answer string, chunks []retrieval.RetrievedChunk) {
 	c.complete = true
 	c.answer = answer
 	c.chunks = chunks
@@ -93,8 +93,8 @@ func newTestChatWithRecorder(t *testing.T, rag *mockRetriever, llm *mockLLM) (*C
 }
 
 // fixedChunks 是用例共用的两条假 chunk，模拟 RAG 召回。
-func fixedChunks() []rag.RetrievedChunk {
-	return []rag.RetrievedChunk{
+func fixedChunks() []retrieval.RetrievedChunk {
+	return []retrieval.RetrievedChunk{
 		{ID: "c1", Content: "chunk one", Score: 0.9, KbID: 1},
 		{ID: "c2", Content: "chunk two", Score: 0.7, KbID: 1},
 	}
@@ -102,8 +102,8 @@ func fixedChunks() []rag.RetrievedChunk {
 
 // fixedRetrieveResult 构造一个标准的 RAG 返回值，messages 是任意非空切片即可，
 // chat_service 只把它原样喂给 LLM 桩，不解析内容。
-func fixedRetrieveResult() *rag.RetrieveResult {
-	return &rag.RetrieveResult{
+func fixedRetrieveResult() *retrieval.RetrieveResult {
+	return &retrieval.RetrieveResult{
 		RewrittenQuery: "rewritten",
 		SubQuestions:   []string{"rewritten"},
 		Chunks:         fixedChunks(),
@@ -116,7 +116,7 @@ func fixedRetrieveResult() *rag.RetrieveResult {
 // TestSendMessage_HappyPath 验证同步问答端到端：user 与 assistant 消息都落库，
 // 返回结构带正确的 answer + chunks。
 func TestSendMessage_HappyPath(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
@@ -151,7 +151,7 @@ func TestSendMessage_HappyPath(t *testing.T) {
 // TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant 验证 RAG 失败时
 // user 消息保留、assistant 不落库——半成品答案不能污染未来历史。
 func TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return nil, errors.New("milvus down")
 	}}
 	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
@@ -175,7 +175,7 @@ func TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant(t *testing.T) {
 
 // TestSendMessage_LLMFailure_KeepsUserSkipsAssistant 验证 LLM 失败时也只落 user 消息。
 func TestSendMessage_LLMFailure_KeepsUserSkipsAssistant(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
@@ -200,7 +200,7 @@ func TestSendMessage_LLMFailure_KeepsUserSkipsAssistant(t *testing.T) {
 // 会被回放给 RAG 当作"先前历史"。
 func TestSendMessage_PassesHistoryWithoutCurrentQuestion(t *testing.T) {
 	var capturedHistory []aiclient.ChatMessage
-	rr := &mockRetriever{onRetrieve: func(req rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		capturedHistory = req.History
 		return fixedRetrieveResult(), nil
 	}}
@@ -227,7 +227,7 @@ func TestSendMessage_PassesHistoryWithoutCurrentQuestion(t *testing.T) {
 // TestStreamMessage_HappyPath_AccumulatesDeltas 验证流式正常路径：
 // delta 实时回调 + 流结束后才发 OnComplete + assistant 消息一次性落库。
 func TestStreamMessage_HappyPath_AccumulatesDeltas(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	llm := &mockLLM{onStream: func(_ aiclient.ChatRequest, cb aiclient.StreamCallback) error {
@@ -268,7 +268,7 @@ func TestStreamMessage_HappyPath_AccumulatesDeltas(t *testing.T) {
 // 不写 assistant，避免半成品答案污染历史；OnError 由 LLMService 内部已发，
 // StreamMessage 不再重复发。
 func TestStreamMessage_LLMFailure_DoesNotPersistAssistant(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	streamErr := errors.New("stream cut")
@@ -302,7 +302,7 @@ func TestStreamMessage_LLMFailure_DoesNotPersistAssistant(t *testing.T) {
 // 由 StreamMessage 主动发——区别于 LLM 失败的"已发不重发"。
 func TestStreamMessage_RetrieveFailure_ReportsOnError(t *testing.T) {
 	retrieveErr := errors.New("milvus down")
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return nil, retrieveErr
 	}}
 	llm := &mockLLM{onStream: func(_ aiclient.ChatRequest, _ aiclient.StreamCallback) error {
@@ -330,7 +330,7 @@ func TestStreamMessage_RetrieveFailure_ReportsOnError(t *testing.T) {
 // TestSendMessage_RecordsSuccessTrace 验证同步问答成功时落一条 Success=1 的 trace，
 // 且关键字段（用户、改写后 query、chunks 数）都被填上。
 func TestSendMessage_RecordsSuccessTrace(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
@@ -362,7 +362,7 @@ func TestSendMessage_RecordsSuccessTrace(t *testing.T) {
 // TestSendMessage_RecordsFailureTrace 验证 RAG 失败时也落 trace，Success=0、
 // ErrorMessage 非空——失败请求同样要被观测到。
 func TestSendMessage_RecordsFailureTrace(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return nil, errors.New("milvus down")
 	}}
 	llm := &mockLLM{onChat: func(_ aiclient.ChatRequest) (string, error) {
@@ -388,7 +388,7 @@ func TestSendMessage_RecordsFailureTrace(t *testing.T) {
 
 // TestStreamMessage_RecordsSuccessTrace 验证流式问答成功时也落一条 Success=1 的 trace。
 func TestStreamMessage_RecordsSuccessTrace(t *testing.T) {
-	rr := &mockRetriever{onRetrieve: func(_ rag.RetrieveRequest) (*rag.RetrieveResult, error) {
+	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
 	}}
 	llm := &mockLLM{onStream: func(_ aiclient.ChatRequest, cb aiclient.StreamCallback) error {

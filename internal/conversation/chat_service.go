@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/YuHangN/ragent-go/internal/admin"
-	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
 
@@ -24,11 +24,11 @@ const historyMaxMessages = 20
 
 // ragRetriever 是 ChatService 实际需要的 RAG 能力子集。
 //
-// 显式定义接口而不是直接依赖 *rag.RAGCoreService，是为了让单测能注入一个 mock
+// 显式定义接口而不是直接依赖 *retrieval.RAGCoreService，是为了让单测能注入一个 mock
 // 实现，避免在 chat 测试里启 Milvus + 真 LLM。
-// 生产环境直接传 *rag.RAGCoreService 即可（它的 Retrieve 方法签名兼容）。
+// 生产环境直接传 *retrieval.RAGCoreService 即可（它的 Retrieve 方法签名兼容）。
 type ragRetriever interface {
-	Retrieve(ctx context.Context, req rag.RetrieveRequest) (*rag.RetrieveResult, error)
+	Retrieve(ctx context.Context, req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error)
 }
 
 // ChatService 串联会话历史、RAG 检索与 LLM 调用。
@@ -45,7 +45,7 @@ type ChatService struct {
 
 // NewChatService 构造 ChatService。
 //
-// 生产路径在 main.go 里传入 *rag.RAGCoreService 和 routingLLMService；
+// 生产路径在 main.go 里传入 *retrieval.RAGCoreService 和 routingLLMService；
 // recorder 传 nil 时退化为 noopRecorder，调用方主路径不必判空。
 func NewChatService(conv *ConversationService, ragSvc ragRetriever, llm aiclient.LLMService, recorder admin.TraceRecorder) *ChatService {
 	if recorder == nil {
@@ -72,7 +72,7 @@ type SendRequest struct {
 // Chunks 携带本次 RAG 召回的元信息，便于前端展开引用、做 citation 跳转。
 type SendResponse struct {
 	Answer string
-	Chunks []rag.RetrievedChunk
+	Chunks []retrieval.RetrievedChunk
 }
 
 // SendMessage 执行同步问答链路。
@@ -107,7 +107,7 @@ func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendRe
 	}
 
 	ragStart := time.Now()
-	retrieved, err := s.rag.Retrieve(ctx, rag.RetrieveRequest{
+	retrieved, err := s.rag.Retrieve(ctx, retrieval.RetrieveRequest{
 		KbIDs:    req.KbIDs,
 		Question: req.Question,
 		History:  history,
@@ -146,7 +146,7 @@ func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendRe
 // 便于 HTTP 层一次性发"done"事件。
 type StreamCallback interface {
 	OnDelta(delta string)
-	OnComplete(answer string, chunks []rag.RetrievedChunk)
+	OnComplete(answer string, chunks []retrieval.RetrievedChunk)
 	OnError(err error)
 }
 
@@ -181,7 +181,7 @@ func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb Str
 	}
 
 	ragStart := time.Now()
-	retrieved, err := s.rag.Retrieve(ctx, rag.RetrieveRequest{
+	retrieved, err := s.rag.Retrieve(ctx, retrieval.RetrieveRequest{
 		KbIDs:    req.KbIDs,
 		Question: req.Question,
 		History:  history,
@@ -277,7 +277,7 @@ func newTraceBuilder(req SendRequest) *traceBuilder {
 }
 
 // fillFromRetrieve 把 RAG 检索结果的关键字段抄进 trace。
-func (b *traceBuilder) fillFromRetrieve(r *rag.RetrieveResult) {
+func (b *traceBuilder) fillFromRetrieve(r *retrieval.RetrieveResult) {
 	b.record.RewrittenQuery = r.RewrittenQuery
 	if data, err := json.Marshal(r.SubQuestions); err == nil {
 		b.record.SubQuestionsJSON = string(data)

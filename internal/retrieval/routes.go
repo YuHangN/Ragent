@@ -3,7 +3,7 @@
 // 本文件负责把意图树管理 + 调试检索的 HTTP 入口挂到路由树上。意图树管理（CRUD）
 // 与调试检索都属于内部运维能力，按需要可以加鉴权中间件；当前先按 main.go 注入
 // 决定是否包鉴权，路由本身保持纯粹。
-package rag
+package retrieval
 
 import "github.com/gin-gonic/gin"
 

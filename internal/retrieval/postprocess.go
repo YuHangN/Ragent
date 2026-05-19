@@ -6,7 +6,7 @@
 //
 // 通俗来说：这个文件负责把“多个检索通道捞回来的原始资料”，整理成“一份更干净、更相关、
 // 数量合适的上下文材料”，再交给后续 RAG 流程使用。
-package rag
+package retrieval
 
 import (
 	"context"

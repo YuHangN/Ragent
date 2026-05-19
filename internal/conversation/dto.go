@@ -3,7 +3,7 @@
 // 本文件定义 HTTP 层使用的请求/响应 DTO。两类约定：
 //   - 所有 ID（会话 ID、知识库 ID）在 wire 上用 string，避免 JavaScript 处理
 //     int64 时的精度丢失（>2^53 时 number 类型会失去精度）。
-//   - chunk 元信息独立成 chunkDTO 而不是直接暴露 rag.RetrievedChunk，方便后续
+//   - chunk 元信息独立成 chunkDTO 而不是直接暴露 retrieval.RetrievedChunk，方便后续
 //     字段演进且不污染内部领域模型。
 package conversation
 
@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/YuHangN/ragent-go/internal/rag"
+	"github.com/YuHangN/ragent-go/internal/retrieval"
 )
 
 // ──── 请求 ──────────────────────────────────────────────
@@ -132,8 +132,8 @@ func toMessageVOs(list []Message) []MessageVO {
 	return out
 }
 
-// toChunkDTOs 把 rag.RetrievedChunk 列表转 wire 形态。
-func toChunkDTOs(chunks []rag.RetrievedChunk) []ChunkDTO {
+// toChunkDTOs 把 retrieval.RetrievedChunk 列表转 wire 形态。
+func toChunkDTOs(chunks []retrieval.RetrievedChunk) []ChunkDTO {
 	out := make([]ChunkDTO, 0, len(chunks))
 	for _, c := range chunks {
 		out = append(out, ChunkDTO{

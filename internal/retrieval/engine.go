@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"sync"
+
+	"github.com/YuHangN/ragent-go/internal/intent"
 )
 
 // MultiChannelEngine 负责调度多个检索通道。
@@ -220,7 +222,7 @@ func groupByPriority(channels []SearchChannel) [][]SearchChannel {
 //
 // deriveEmptySubQuestions 会返回 {"保修多久？": true}。
 // 如果某个通道没有填写 PerSubQuestionHits，本函数不会根据它猜测查空情况。
-func deriveEmptySubQuestions(subs []SubQuestionIntent, results []SearchChannelResult) map[string]bool {
+func deriveEmptySubQuestions(subs []intent.SubQuestionIntent, results []SearchChannelResult) map[string]bool {
 	if len(subs) == 0 || len(results) == 0 {
 		return nil
 	}

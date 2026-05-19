@@ -4,13 +4,14 @@ import (
 	"context"
 
 	"github.com/YuHangN/ragent-go/config"
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
 
 // RAGCoreService 是 RAG 检索核心的统一入口。
 type RAGCoreService struct {
 	rewriter *QueryRewriteService
-	resolver *IntentResolver
+	resolver *intent.Resolver
 	engine   *MultiChannelEngine
 	prompt   *PromptService
 	config   config.RAGConfig
@@ -18,7 +19,7 @@ type RAGCoreService struct {
 
 func NewRAGCoreService(
 	rewriter *QueryRewriteService,
-	resolver *IntentResolver,
+	resolver *intent.Resolver,
 	engine *MultiChannelEngine,
 	prompt *PromptService,
 	cfg config.RAGConfig,
@@ -49,11 +50,11 @@ func (s *RAGCoreService) Retrieve(ctx context.Context, req RetrieveRequest) (*Re
 	// 2. 意图解析（多子问题并行 → 分组）
 	// subs 保留子问题→候选意图的绑定关系，供 channel 做 per-sub-question 路由；
 	// group 是扁平合并视图，仅用于 SYSTEM 短路判断（findings.md Phase 6.6）。
-	var subs []SubQuestionIntent
-	var group IntentGroup
+	var subs []intent.SubQuestionIntent
+	var group intent.Group
 	if s.resolver != nil && len(req.KbIDs) > 0 {
 		var err error
-		subs, err = s.resolver.Resolve(ctx, req.KbIDs[0], rewriteResult)
+		subs, err = s.resolver.Resolve(ctx, req.KbIDs[0], rewriteResult.SubQuestions)
 		if err == nil {
 			group = s.resolver.MergeGroup(subs)
 		}

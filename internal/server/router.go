@@ -5,6 +5,7 @@ import (
 
 	"github.com/YuHangN/ragent-go/internal/admin"
 	"github.com/YuHangN/ragent-go/internal/conversation"
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/internal/user"
@@ -20,7 +21,8 @@ type Deps struct {
 	KnowledgeKBHandler    *knowledge.KBHandler
 	KnowledgeDocHandler   *knowledge.DocHandler
 	KnowledgeChunkHandler *knowledge.ChunkHandler
-	IntentHandler         *retrieval.IntentHandler
+	IntentHandler         *intent.Handler
+	TestRetrieveHandler   *retrieval.TestRetrieveHandler
 	ChatHandler           *conversation.Handler
 	AdminHandler          *admin.Handler
 	JWTSecret             string
@@ -47,9 +49,11 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	knowledge.RegisterRoutes(api, deps.KnowledgeKBHandler, deps.KnowledgeDocHandler, deps.KnowledgeChunkHandler, middleware.Auth(deps.JWTSecret))
 
 	// 意图树管理 + 调试检索；与 knowledge 同一鉴权粒度——/intent-nodes 与 /rag/test-retrieve 都
-	// 会触发 LLM / 向量检索调用，必须挂 JWT 鉴权。
+	// 会触发 LLM / 向量检索调用，必须挂 JWT 鉴权。intent 与 retrieval 各自注册，
+	// 保持包边界清晰。
 	ragGroup := api.Group("", middleware.Auth(deps.JWTSecret))
-	retrieval.RegisterRoutes(ragGroup, deps.IntentHandler)
+	intent.RegisterRoutes(ragGroup, deps.IntentHandler)
+	retrieval.RegisterRoutes(ragGroup, deps.TestRetrieveHandler)
 
 	// RAG Chat 主链路：/conversations CRUD + /chat + /chat/stream。
 	// 全部走 JWT 鉴权——chat 触发 LLM 调用，且历史消息按用户归属隔离。

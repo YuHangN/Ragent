@@ -1,4 +1,4 @@
-package retrieval
+package intent
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 
 // newTestRouter 构造一个挂了 error handler middleware 的 gin engine，
 // 用来覆盖 handler 里 `c.Error(apperror.NewClientMsg(...))` 之后的 HTTP 返回。
-func newTestRouter(h *IntentHandler) *gin.Engine {
+func newTestRouter(h *Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
@@ -26,8 +26,8 @@ func newTestRouter(h *IntentHandler) *gin.Engine {
 // TestCreateIntentNode_KbKindRequiresPartitionName 验证 Phase 6.7 新增的校验：
 // Kind=KB 的意图节点不带 PartitionName 时，handler 拒绝创建。
 func TestCreateIntentNode_KbKindRequiresPartitionName(t *testing.T) {
-	repo := &stubIntentRepo{}
-	h := NewIntentHandler(repo, nil)
+	repo := &stubRepo{}
+	h := NewHandler(repo)
 	router := newTestRouter(h)
 
 	body := map[string]any{
@@ -50,8 +50,8 @@ func TestCreateIntentNode_KbKindRequiresPartitionName(t *testing.T) {
 
 // TestCreateIntentNode_SystemKindNoPartitionOK 验证 SYSTEM 节点不强制 PartitionName。
 func TestCreateIntentNode_SystemKindNoPartitionOK(t *testing.T) {
-	repo := &stubIntentRepo{}
-	h := NewIntentHandler(repo, nil)
+	repo := &stubRepo{}
+	h := NewHandler(repo)
 	router := newTestRouter(h)
 
 	body := map[string]any{

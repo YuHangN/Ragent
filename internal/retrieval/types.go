@@ -3,44 +3,9 @@ package retrieval
 import (
 	"context"
 
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
-
-// ──── 意图 ────────────────────────────────────────────────
-
-type IntentKind string
-
-const (
-	IntentKindKB     IntentKind = "KB"     // 走 RAG 检索
-	IntentKindSystem IntentKind = "SYSTEM" // 系统交互（不检索）
-	IntentKindMCP    IntentKind = "MCP"    // 调外部工具（Phase 10）
-)
-
-// IntentCandidate 增加 Kind 字段：
-type IntentCandidate struct {
-	NodeID         int64
-	NodeName       string
-	KbID           int64
-	Kind           IntentKind // 新增
-	PartitionName  string     // KB 类型生效，检索目标 partition 名；MCP/SYSTEM 留空
-	MCPToolID      string     // 新增（MCP 类型生效，Phase 10 用）
-	Score          float64    // 0.0–1.0
-}
-
-// SubQuestionIntent 单子问题的意图分类结果
-type SubQuestionIntent struct {
-	SubQuestion string
-	Candidates  []IntentCandidate
-}
-
-// IntentGroup 合并所有子问题后的意图分组。
-// AllSystemOnly 严格语义：所有子问题都仅命中"单个 SYSTEM 候选"才置位（对齐 Java IntentResolver.isSystemOnly + RAGChatServiceImpl 的 allSystemOnly 守卫）。
-// 混合 SYSTEM+KB 场景（如 "你好，介绍一下产品"）AllSystemOnly=false，仍走 RAG 检索。
-type IntentGroup struct {
-	KbIntents     []IntentCandidate // Kind=KB 的所有候选
-	McpIntents    []IntentCandidate // Kind=MCP 的所有候选
-	AllSystemOnly bool              // 所有子问题都仅命中单个 SYSTEM 节点（用于纯系统应答短路）
-}
 
 // ──── 查询改写 ────────────────────────────────────────────
 
@@ -74,8 +39,8 @@ type SearchContext struct {
 	KbIDs        []int64
 	Question     string
 	SubQuestions []string
-	SubIntents   []SubQuestionIntent
-	IntentGroup  IntentGroup
+	SubIntents   []intent.SubQuestionIntent
+	IntentGroup  intent.Group
 	TopK         int
 	// PriorTierEmptySubQuestions：由 engine 在 priority tier 间填充。
 	// 列出"前面 tier 的 KB 意图通道应该查、但实际查空"的子问题。VectorGlobal

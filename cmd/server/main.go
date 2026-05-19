@@ -16,6 +16,7 @@ import (
 	"github.com/YuHangN/ragent-go/internal/ingestion"
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/internal/retrieval"
 	"github.com/YuHangN/ragent-go/internal/schedule"
@@ -136,13 +137,13 @@ func main() {
 	knowledgeChunkHandler := knowledge.NewChunkHandler(chunkSvc)
 
 	// 10.5 RAG Core 服务：把 Phase 6 全套组件串成统一入口供 Phase 7 chat 调用。
-	// 整个链路：QueryRewrite → IntentResolver → MultiChannelEngine → Prompt。
-	intentRepo := retrieval.NewIntentRepo(gormDB)
+	// 整个链路：QueryRewrite → intent.Resolver → MultiChannelEngine → Prompt。
+	intentRepo := intent.NewRepo(gormDB)
 	retriever := retrieval.NewMilvusRetriever(milvusClient, embeddingService)
 
 	rewriteSvc := retrieval.NewQueryRewriteService(llmService, cfg.RAG.QueryRewrite)
-	classifier := retrieval.NewIntentClassifier(llmService, intentRepo)
-	intentResolver := retrieval.NewIntentResolver(
+	classifier := intent.NewClassifier(llmService, intentRepo)
+	intentResolver := intent.NewResolver(
 		classifier,
 		3, // 单子问题最多保留 3 个意图候选
 		cfg.RAG.Search.Channels.IntentDirected.MinIntentScore, // 与 IntentDirected 通道复用同一阈值
@@ -161,9 +162,8 @@ func main() {
 	promptSvc := retrieval.NewPromptService()
 	ragCoreSvc := retrieval.NewRAGCoreService(rewriteSvc, intentResolver, ragEngine, promptSvc, cfg.RAG)
 
-	// IntentHandler 同时持有 ragCoreSvc，用于 /api/ragent/rag/test-retrieve 调试端点；
-	// Phase 7 chat 上线后该端点保留作为运维工具。
-	intentHandler := retrieval.NewIntentHandler(intentRepo, ragCoreSvc)
+	intentHandler := intent.NewHandler(intentRepo)
+	testRetrieveHandler := retrieval.NewTestRetrieveHandler(ragCoreSvc)
 
 	// 10.6 RAG 链路追踪（Phase 8 MVP）：按配置决定是否真落库。
 	// cfg.RAG.Trace.Enabled=false 时用 noopRecorder，chat 主路径零开销。
@@ -208,6 +208,7 @@ func main() {
 		KnowledgeDocHandler:   knowledgeDocHandler,
 		KnowledgeChunkHandler: knowledgeChunkHandler,
 		IntentHandler:         intentHandler,
+		TestRetrieveHandler:   testRetrieveHandler,
 		ChatHandler:           chatHandler,
 		AdminHandler:          adminHandler,
 		JWTSecret:             cfg.App.JWTSecret,

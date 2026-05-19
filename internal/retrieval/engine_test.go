@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,9 +113,9 @@ func TestEngine_HighScoreIntentWithHits_NoFallthrough(t *testing.T) {
 
 	sc := SearchContext{
 		Question: "Q1",
-		SubIntents: []SubQuestionIntent{
-			{SubQuestion: "Q1", Candidates: []IntentCandidate{
-				{Kind: IntentKindKB, Score: 0.95, PartitionName: "refund"},
+		SubIntents: []intent.SubQuestionIntent{
+			{SubQuestion: "Q1", Candidates: []intent.Candidate{
+				{Kind: intent.KindKB, Score: 0.95, PartitionName: "refund"},
 			}},
 		},
 		TopK: 5,
@@ -163,9 +164,9 @@ func TestEngine_HighScoreIntentEmptyPartition_FallthroughToGlobal(t *testing.T) 
 
 	sc := SearchContext{
 		Question: "Q1",
-		SubIntents: []SubQuestionIntent{
-			{SubQuestion: "Q1", Candidates: []IntentCandidate{
-				{Kind: IntentKindKB, Score: 0.95, PartitionName: "refund"},
+		SubIntents: []intent.SubQuestionIntent{
+			{SubQuestion: "Q1", Candidates: []intent.Candidate{
+				{Kind: intent.KindKB, Score: 0.95, PartitionName: "refund"},
 			}},
 		},
 		TopK: 5,
@@ -209,8 +210,8 @@ func TestEngine_AllSystemOnly_NoFallthroughEvenIfEmpty(t *testing.T) {
 
 	sc := SearchContext{
 		Question:    "你好",
-		SubIntents:  []SubQuestionIntent{{SubQuestion: "你好"}},
-		IntentGroup: IntentGroup{AllSystemOnly: true},
+		SubIntents:  []intent.SubQuestionIntent{{SubQuestion: "你好"}},
+		IntentGroup: intent.Group{AllSystemOnly: true},
 		TopK:        5,
 	}
 	chunks, err := engine.Retrieve(context.Background(), sc)

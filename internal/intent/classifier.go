@@ -1,4 +1,4 @@
-package retrieval
+package intent
 
 import (
 	"context"
@@ -20,10 +20,10 @@ const intentClassifyPromptTemplate = `你是一个意图分类助手。请对用
 请以 JSON 数组格式回复，不要输出任何其他内容：
 [{"node_id": 1, "score": 0.85}, {"node_id": 2, "score": 0.3}]`
 
-// IntentClassifier 使用 LLM 给意图节点打分。
+// Classifier 使用 LLM 给意图节点打分。
 //
 // 它不负责拆分问题，也不负责决定后续走哪个检索通道。它只做一件事：
-// 给某个 KB 下“可分类的意图节点”计算相关性分数，并转成 IntentCandidate。
+// 给某个 KB 下“可分类的意图节点”计算相关性分数，并转成 Candidate。
 //
 // 例子：用户问题是“产品 A 怎么安装？”，KB 下有三个叶子意图：
 //   - 产品安装
@@ -32,16 +32,16 @@ const intentClassifyPromptTemplate = `你是一个意图分类助手。请对用
 //
 // LLM 可能返回安装 0.92、退款 0.20、问候 0.05。Classify 会按 minScore 和 topK
 // 过滤后，只返回分数足够高的候选。
-type IntentClassifier struct {
+type Classifier struct {
 	llm        aiclient.LLMService
-	intentRepo IntentRepo
+	intentRepo Repo
 }
 
-// NewIntentClassifier 创建意图分类器。
+// NewClassifier 创建意图分类器。
 //
 // llm 用来判断“问题和意图节点有多相关”；repo 用来加载指定 KB 下可分类的意图节点。
-func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassifier {
-	return &IntentClassifier{llm: llm, intentRepo: repo}
+func NewClassifier(llm aiclient.LLMService, repo Repo) *Classifier {
+	return &Classifier{llm: llm, intentRepo: repo}
 }
 
 // Classify 对指定 KB 下的可分类意图节点打分。
@@ -51,7 +51,7 @@ func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassi
 //   - 把问题和节点列表拼进 prompt，让 LLM 返回 [{"node_id": ..., "score": ...}]。
 //   - 清理 LLM 可能包上的 markdown 代码块，再解析 JSON。
 //   - 丢弃低于 minScore 的结果，也丢弃仓库中不存在的 node_id。
-//   - 把分数合格的 IntentNode 转成 IntentCandidate，并按分数降序返回前 topK 个。
+//   - 把分数合格的 Node 转成 Candidate，并按分数降序返回前 topK 个。
 //
 // 例子：kbID=100、question="产品 A 怎么安装？"、topK=2、minScore=0.5。
 // 仓库中有三个节点：
@@ -66,7 +66,7 @@ func NewIntentClassifier(llm aiclient.LLMService, repo IntentRepo) *IntentClassi
 //
 // 返回的候选会带上 Kind / PartitionName / MCPToolID。调用方可以根据 Kind
 // 决定后续是走 KB 检索（用 PartitionName 缩范围）、系统回复，还是外部工具。
-func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question string, topK int, minScore float64) ([]IntentCandidate, error) {
+func (c *Classifier) Classify(ctx context.Context, kbID int64, question string, topK int, minScore float64) ([]Candidate, error) {
 	classifiable, err := c.intentRepo.FindClassifiableByKbID(kbID)
 	if err != nil {
 		return nil, fmt.Errorf("intent: load classifiable for kb %d: %w", kbID, err)
@@ -105,13 +105,13 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 		return nil, fmt.Errorf("intent: parse LLM scores: %w", err)
 	}
 
-	nodeMap := make(map[int64]IntentNode, len(classifiable))
+	nodeMap := make(map[int64]Node, len(classifiable))
 	for _, n := range classifiable {
 		nodeMap[n.ID] = n
 	}
 
 	// 只信任当前 KB 中真实存在的节点。LLM 返回的未知 node_id 会被忽略。
-	var candidates []IntentCandidate
+	var candidates []Candidate
 	for _, s := range scores {
 		if s.Score < minScore {
 			continue
@@ -120,7 +120,7 @@ func (c *IntentClassifier) Classify(ctx context.Context, kbID int64, question st
 		if !ok {
 			continue
 		}
-		candidates = append(candidates, IntentCandidate{
+		candidates = append(candidates, Candidate{
 			NodeID:         n.ID,
 			NodeName:       n.Name,
 			KbID:           n.KbID,

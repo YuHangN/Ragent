@@ -10,11 +10,13 @@ import (
 	"time"
 )
 
+// OpenAIEmbeddingClient 实现 OpenAI 兼容的文本向量化协议。
 type OpenAIEmbeddingClient struct {
 	provider Provider
 	client   *http.Client
 }
 
+// NewOpenAIEmbeddingClient 构造默认绑定 ProviderOpenAI 的向量化客户端。
 func NewOpenAIEmbeddingClient() *OpenAIEmbeddingClient {
 	return &OpenAIEmbeddingClient{
 		provider: ProviderOpenAI,
@@ -22,13 +24,16 @@ func NewOpenAIEmbeddingClient() *OpenAIEmbeddingClient {
 	}
 }
 
+// WithProvider 将客户端绑定到指定 provider，便于复用 OpenAI 兼容协议实现。
 func (c *OpenAIEmbeddingClient) WithProvider(p Provider) *OpenAIEmbeddingClient {
 	c.provider = p
 	return c
 }
 
+// Provider 返回当前客户端负责的 provider。
 func (c *OpenAIEmbeddingClient) Provider() Provider { return c.provider }
 
+// Embed 对单段文本生成向量。
 func (c *OpenAIEmbeddingClient) Embed(ctx context.Context, text string, target *ModelTarget) ([]float32, error) {
 	out, err := c.EmbedBatch(ctx, []string{text}, target)
 	if err != nil {
@@ -40,8 +45,10 @@ func (c *OpenAIEmbeddingClient) Embed(ctx context.Context, text string, target *
 	return out[0], nil
 }
 
+// embeddingBatchSize 限制单次请求的文本数量，避免过大的批量请求压垮 provider。
 const embeddingBatchSize = 32
 
+// EmbedBatch 对多段文本批量生成向量，并保持输出顺序与输入顺序一致。
 func (c *OpenAIEmbeddingClient) EmbedBatch(ctx context.Context, texts []string, target *ModelTarget) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -65,7 +72,7 @@ type embeddingRequest struct {
 	Model          string   `json:"model"`
 	Input          []string `json:"input"`
 	EncodingFormat string   `json:"encoding_format"`
-	Dimensions     int      `json:"dimensions,omitempty"` // OpenAI text-embedding-3-* 用，Ollama 等不识别会忽略
+	Dimensions     int      `json:"dimensions,omitempty"` // OpenAI text-embedding-3-* 支持指定维度。
 }
 
 type embeddingResponse struct {
@@ -81,6 +88,7 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+// doEmbed 执行单批次向量化请求。
 func (c *OpenAIEmbeddingClient) doEmbed(ctx context.Context, texts []string, target *ModelTarget) ([][]float32, error) {
 	url, err := ResolveURL(target.Provider, target.Candidate, CapabilityEmbedding)
 	if err != nil {

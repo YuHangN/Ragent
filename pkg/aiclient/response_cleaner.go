@@ -10,6 +10,7 @@ var (
 	trailingCodeFence = regexp.MustCompile("\\n?```\\s*$")
 )
 
+// StripMarkdownCodeFence 去除模型输出外层的 Markdown 代码围栏。
 func StripMarkdownCodeFence(raw string) string {
 	cleaned := strings.TrimSpace(raw)
 	cleaned = leadingCodeFence.ReplaceAllString(cleaned, "")

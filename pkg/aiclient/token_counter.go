@@ -2,16 +2,23 @@ package aiclient
 
 import "unicode"
 
+// TokenCounter 定义估算文本 token 数量的接口。
 type TokenCounter interface {
 	Count(text string) int
 }
 
+// HeuristicTokenCounter 使用轻量启发式规则估算 token 数量。
 type HeuristicTokenCounter struct{}
 
+// NewHeuristicTokenCounter 构造启发式 token 计数器。
 func NewHeuristicTokenCounter() *HeuristicTokenCounter {
 	return &HeuristicTokenCounter{}
 }
 
+// Count 返回文本的近似 token 数量。
+//
+// ASCII 按约 4 个字符 1 个 token 估算，CJK 字符按 1 个字符 1 个 token 估算，
+// 其他非 ASCII 字符按约 2 个字符 1 个 token 估算。
 func (HeuristicTokenCounter) Count(text string) int {
 	if text == "" {
 		return 0
@@ -32,7 +39,7 @@ func (HeuristicTokenCounter) Count(text string) int {
 	}
 
 	if asciiCount == 0 && cjkCount == 0 && otherCount == 0 {
-		return 0 // 全是空白
+		return 0 // 全空白文本不计 token。
 	}
 
 	asciiTokens := (asciiCount + 3) / 4
@@ -47,13 +54,13 @@ func (HeuristicTokenCounter) Count(text string) int {
 
 func isCJK(r rune) bool {
 	switch {
-	case r >= 0x4E00 && r <= 0x9FFF: // CJK 统一表意
+	case r >= 0x4E00 && r <= 0x9FFF: // CJK 统一表意文字
 		return true
-	case r >= 0x3400 && r <= 0x4DBF: // 扩展 A
+	case r >= 0x3400 && r <= 0x4DBF: // CJK 扩展 A
 		return true
-	case r >= 0x20000 && r <= 0x2A6DF: // 扩展 B
+	case r >= 0x20000 && r <= 0x2A6DF: // CJK 扩展 B
 		return true
-	case r >= 0x2A700 && r <= 0x2EBEF: // 扩展 C/D/E/F
+	case r >= 0x2A700 && r <= 0x2EBEF: // CJK 扩展 C/D/E/F
 		return true
 	case r >= 0xF900 && r <= 0xFAFF: // CJK 兼容
 		return true

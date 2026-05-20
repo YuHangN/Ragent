@@ -8,12 +8,15 @@ import (
 type healthState int
 
 const (
+	// stateClosed 表示模型健康，调用可正常放行。
 	stateClosed healthState = iota
+	// stateOpen 表示模型处于熔断期，调用会被跳过。
 	stateOpen
+	// stateHalfOpen 表示熔断期结束后的探测状态，只允许一个探测请求。
 	stateHalfOpen
 )
 
-// modelHealth 单个模型的健康记录。
+// modelHealth 记录单个模型目标的熔断状态。
 type modelHealth struct {
 	state               healthState
 	consecutiveFailures int
@@ -21,7 +24,7 @@ type modelHealth struct {
 	halfOpenInFlight    bool
 }
 
-// HealthStore 熔断器存储
+// HealthStore 保存模型目标的熔断状态，并负责调用放行判断。
 type HealthStore struct {
 	mu               sync.Mutex
 	healthByID       map[string]*modelHealth
@@ -29,7 +32,9 @@ type HealthStore struct {
 	openDuration     time.Duration
 }
 
-// NewHealthStore 构造熔断器。failureThreshold=3 / openDuration=30s 是 Java 默认值。
+// NewHealthStore 构造熔断状态存储。
+//
+// failureThreshold 和 openDuration 小于等于 0 时分别回退到 3 次失败和 30 秒。
 func NewHealthStore(failureThreshold int, openDuration time.Duration) *HealthStore {
 	if failureThreshold <= 0 {
 		failureThreshold = 3
@@ -44,10 +49,10 @@ func NewHealthStore(failureThreshold int, openDuration time.Duration) *HealthSto
 	}
 }
 
-// AllowCall 该模型当前是否允许调用。
-// CLOSED → 允许
-// OPEN：openUntil 已过 → 升级到 HALF_OPEN 并允许；否则拒绝
-// HALF_OPEN：inFlight=true 拒绝（已有 probe 在路上）；否则 inFlight=true 并允许
+// AllowCall 判断指定模型当前是否允许发起调用。
+//
+// CLOSED 直接放行；OPEN 在熔断期结束后进入 HALF_OPEN 并放行一次探测；
+// HALF_OPEN 只允许一个正在进行的探测请求。
 func (hs *HealthStore) AllowCall(id string) bool {
 	if id == "" {
 		return false
@@ -83,7 +88,7 @@ func (hs *HealthStore) AllowCall(id string) bool {
 	return false
 }
 
-// MarkSuccess 调用成功。重置状态到 CLOSED + 清零计数。
+// MarkSuccess 标记指定模型调用成功，并将熔断状态重置为 CLOSED。
 func (hs *HealthStore) MarkSuccess(id string) {
 	if id == "" {
 		return
@@ -102,9 +107,9 @@ func (hs *HealthStore) MarkSuccess(id string) {
 	h.halfOpenInFlight = false
 }
 
-// MarkFailure 调用失败。
-// HALF_OPEN：直接重开 OPEN（probe 失败说明 provider 还没好）。
-// CLOSED：累计 +1，达到阈值时进 OPEN。
+// MarkFailure 标记指定模型调用失败，并在达到阈值时打开熔断。
+//
+// HALF_OPEN 下的失败会立即重新进入 OPEN；CLOSED 下的失败会累计计数。
 func (hs *HealthStore) MarkFailure(id string) {
 	if id == "" {
 		return
@@ -136,7 +141,9 @@ func (hs *HealthStore) MarkFailure(id string) {
 	}
 }
 
-// IsOpen 仅供 Selector 提前过滤用，不消耗 HALF_OPEN 配额。
+// IsOpen 判断指定模型是否仍处于 OPEN 熔断期。
+//
+// 该方法只用于 Selector 提前过滤，不会消耗 HALF_OPEN 的探测配额。
 func (hs *HealthStore) IsOpen(id string) bool {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()

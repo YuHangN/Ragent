@@ -5,20 +5,27 @@ import (
 	"net/http"
 )
 
-// ErrorType 模型客户端错误分类
+// ErrorType 表示模型调用失败的分类。
 type ErrorType string
 
 const (
-	ErrUnauthorized    ErrorType = "UNAUTHORIZED"
-	ErrRateLimited     ErrorType = "RATE_LIMITED"
-	ErrServerError     ErrorType = "SERVER_ERROR"
-	ErrClientError     ErrorType = "CLIENT_ERROR"
-	ErrNetworkError    ErrorType = "NETWORK_ERROR"
+	// ErrUnauthorized 表示凭证缺失、无效或无权限。
+	ErrUnauthorized ErrorType = "UNAUTHORIZED"
+	// ErrRateLimited 表示请求被限流或触发配额限制。
+	ErrRateLimited ErrorType = "RATE_LIMITED"
+	// ErrServerError 表示 provider 返回 5xx 服务端错误。
+	ErrServerError ErrorType = "SERVER_ERROR"
+	// ErrClientError 表示非鉴权类的 4xx 客户端错误。
+	ErrClientError ErrorType = "CLIENT_ERROR"
+	// ErrNetworkError 表示请求未能正常到达 provider 或读取响应。
+	ErrNetworkError ErrorType = "NETWORK_ERROR"
+	// ErrInvalidResponse 表示 provider 响应格式无法被当前客户端使用。
 	ErrInvalidResponse ErrorType = "INVALID_RESPONSE"
-	ErrProviderError   ErrorType = "PROVIDER_ERROR"
+	// ErrProviderError 表示无法归入其他类型的 provider 错误。
+	ErrProviderError ErrorType = "PROVIDER_ERROR"
 )
 
-// IsRetryable 该错误是否值得重试。
+// IsRetryable 判断同一个请求是否值得重试。
 func (t ErrorType) IsRetryable() bool {
 	switch t {
 	case ErrRateLimited, ErrServerError, ErrNetworkError, ErrProviderError:
@@ -28,7 +35,7 @@ func (t ErrorType) IsRetryable() bool {
 	}
 }
 
-// ClientError 模型客户端调用错误
+// ClientError 表示一次模型客户端调用中的结构化错误。
 type ClientError struct {
 	Type       ErrorType
 	StatusCode int
@@ -36,6 +43,7 @@ type ClientError struct {
 	Cause      error
 }
 
+// Error 返回包含错误类型、HTTP 状态码和消息的可读错误文本。
 func (e *ClientError) Error() string {
 	if e.StatusCode > 0 {
 		return fmt.Sprintf("[%s] HTTP %d: %s", e.Type, e.StatusCode, e.Message)
@@ -43,9 +51,10 @@ func (e *ClientError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Type, e.Message)
 }
 
+// Unwrap 返回底层错误，便于 errors.Is / errors.As 继续匹配。
 func (e *ClientError) Unwrap() error { return e.Cause }
 
-// ClassifyHTTP 把 HTTP 状态码映射到 ErrorType
+// ClassifyHTTP 将 HTTP 状态码映射为包内统一的错误类型。
 func ClassifyHTTP(status int) ErrorType {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -61,7 +70,7 @@ func ClassifyHTTP(status int) ErrorType {
 	}
 }
 
-// NewHTTPError 是各 client 拿到非 200 响应时的便捷构造。
+// NewHTTPError 根据非 200 HTTP 响应构造 ClientError。
 func NewHTTPError(status int, body string) *ClientError {
 	return &ClientError{
 		Type:       ClassifyHTTP(status),

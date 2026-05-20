@@ -7,20 +7,24 @@ import (
 	"github.com/YuHangN/ragent-go/config"
 )
 
-// LLMService 业务侧使用的 LLM 入口。接口保持稳定，实现从单候选升级为路由 + fallback。
+// LLMService 是业务侧使用的聊天模型入口。
+//
+// 接口保持稳定，具体实现负责在多个候选模型之间路由和 fallback。
 type LLMService interface {
 	Chat(ctx context.Context, req ChatRequest) (string, error)
 	StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback) error
 }
 
-// routingLLMService 路由式实现。对齐 Java RoutingLLMService。
+// routingLLMService 是带候选选择、熔断和 fallback 的 LLMService 实现。
 type routingLLMService struct {
 	selector         *Selector
 	healthStore      *HealthStore
 	clientByProvider map[Provider]ChatClient
 }
 
-// NewLLMService 构造路由 LLM Service。clients 列表里每个 client 的 Provider() 用作路由 key。
+// NewLLMService 构造路由式 LLMService。
+//
+// clients 中每个 ChatClient 的 Provider() 会作为路由表 key。
 func NewLLMService(cfg *config.AIConfig, hs *HealthStore, clients []ChatClient) (LLMService, error) {
 	if len(clients) == 0 {
 		return nil, fmt.Errorf("llm: at least one ChatClient required")
@@ -36,6 +40,7 @@ func NewLLMService(cfg *config.AIConfig, hs *HealthStore, clients []ChatClient) 
 	}, nil
 }
 
+// Chat 选择可用聊天模型并执行非流式调用。
 func (s *routingLLMService) Chat(ctx context.Context, req ChatRequest) (string, error) {
 	targets := s.selector.SelectChatCandidates(req.Thinking)
 	return ExecuteWithFallback(
@@ -51,10 +56,11 @@ func (s *routingLLMService) Chat(ctx context.Context, req ChatRequest) (string, 
 	)
 }
 
+// StreamChat 选择可用聊天模型并执行流式调用。
 func (s *routingLLMService) StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback) error {
 	targets := s.selector.SelectChatCandidates(req.Thinking)
-	// 流式不能用泛型 ExecuteWithFallback —— 没法回放回调。
-	// 简化：第一个 client 失败就调 cb.OnError 且返回错误；不做 Phase 7 的 ProbeBufferingCallback。
+	// 流式输出一旦写入回调就无法完整回放，因此这里只在开始前选择目标；
+	// 目标调用失败后直接通过回调报告错误，不尝试把半段输出切到下一个模型。
 	if len(targets) == 0 {
 		err := fmt.Errorf("no Chat candidates available")
 		cb.OnError(err)
@@ -72,8 +78,6 @@ func (s *routingLLMService) StreamChat(ctx context.Context, req ChatRequest, cb 
 		err := client.StreamChat(ctx, req, cb, target)
 		if err != nil {
 			s.healthStore.MarkFailure(target.ID)
-			// 流式 fallback 在 Phase 7 RAG Chat 用 ProbeBufferingCallback 时再做；
-			// 这里第一个失败就直接报错，对齐 Phase 4 单候选的现有行为。
 			cb.OnError(err)
 			return err
 		}

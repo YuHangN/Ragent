@@ -6,14 +6,14 @@ import (
 	"github.com/YuHangN/ragent-go/config"
 )
 
-// ModelTarget 把候选和 provider 绑成一个可调用单元
+// ModelTarget 将模型候选和 provider 配置绑定为一次可调用目标。
 type ModelTarget struct {
 	ID        string
 	Candidate config.ModelCandidate
 	Provider  config.ProviderConfig
 }
 
-// NewModelTarget 构造 ModelTarget。Candidate.ID 为空时用 "provider::model" fallback。
+// NewModelTarget 构造 ModelTarget，并在候选 ID 为空时生成稳定兜底 ID。
 func NewModelTarget(c config.ModelCandidate, p config.ProviderConfig) ModelTarget {
 	id := c.ID
 	if id == "" {

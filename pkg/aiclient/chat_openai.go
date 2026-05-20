@@ -12,14 +12,16 @@ import (
 	"time"
 )
 
-// OpenAIChatClient 实现 ChatClient，覆盖 OpenAI / Ollama 等 OpenAI 兼容协议。
-// 对齐 Java OpenAIStyleSseParser + 各 OpenAI-Style ChatClient 的合并版。
+// OpenAIChatClient 实现 OpenAI 兼容的聊天补全协议。
+//
+// 该实现可通过 WithProvider 复用到 OpenAI、Ollama 等共享 chat completions
+// 请求格式和 SSE 响应格式的 provider。
 type OpenAIChatClient struct {
 	provider Provider
 	client   *http.Client
 }
 
-// NewOpenAIChatClient 默认绑定 ProviderOpenAI；想绑别的 provider 用 WithProvider。
+// NewOpenAIChatClient 构造默认绑定 ProviderOpenAI 的聊天客户端。
 func NewOpenAIChatClient() *OpenAIChatClient {
 	return &OpenAIChatClient{
 		provider: ProviderOpenAI,
@@ -27,12 +29,13 @@ func NewOpenAIChatClient() *OpenAIChatClient {
 	}
 }
 
-// WithProvider 让同一个 client 适配 OpenAI / Ollama 等共享 OpenAI 协议的 provider。
+// WithProvider 将客户端绑定到指定 provider，便于复用 OpenAI 兼容协议实现。
 func (c *OpenAIChatClient) WithProvider(p Provider) *OpenAIChatClient {
 	c.provider = p
 	return c
 }
 
+// Provider 返回当前客户端负责的 provider。
 func (c *OpenAIChatClient) Provider() Provider { return c.provider }
 
 // ── request / response types ─────────────────────────────────────
@@ -57,8 +60,7 @@ type chatCompletionResponse struct {
 	Error *apiError `json:"error,omitempty"`
 }
 
-// ── sync chat ────────────────────────────────────────────────────
-
+// Chat 调用 OpenAI 兼容的非流式聊天补全接口。
 func (c *OpenAIChatClient) Chat(ctx context.Context, req ChatRequest, target *ModelTarget) (string, error) {
 	url, err := ResolveURL(target.Provider, target.Candidate, CapabilityChat)
 	if err != nil {
@@ -95,8 +97,7 @@ func (c *OpenAIChatClient) Chat(ctx context.Context, req ChatRequest, target *Mo
 	return result.Choices[0].Message.Content, nil
 }
 
-// ── stream chat ──────────────────────────────────────────────────
-
+// StreamChat 调用 OpenAI 兼容的流式聊天补全接口。
 func (c *OpenAIChatClient) StreamChat(ctx context.Context, req ChatRequest, cb StreamCallback, target *ModelTarget) error {
 	url, err := ResolveURL(target.Provider, target.Candidate, CapabilityChat)
 	if err != nil {
@@ -144,12 +145,12 @@ func (c *OpenAIChatClient) StreamChat(ctx context.Context, req ChatRequest, cb S
 	return nil
 }
 
-// sseDelta 一帧 stream chunk。
+// sseDelta 表示 OpenAI 兼容 SSE 流中的一帧增量响应。
 type sseDelta struct {
 	Choices []struct {
 		Delta struct {
 			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"` // OpenAI o1/兼容协议的思考链字段
+			ReasoningContent string `json:"reasoning_content"` // 部分兼容协议用于承载思考内容。
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -158,7 +159,7 @@ type sseDelta struct {
 func parseSseDelta(payload string, cb StreamCallback) {
 	var chunk sseDelta
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-		return // 静默丢弃畸形 chunk（Java 也是 log.warn + continue）
+		return // 流式输出中跳过畸形帧，避免单帧解析失败中断整段回答。
 	}
 	if len(chunk.Choices) == 0 {
 		return

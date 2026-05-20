@@ -5,11 +5,12 @@ import (
 )
 
 type IngestionConfig struct {
-	Tika       TikaConfig       `mapstructure:"tika"`
-	Feishu     FeishuConfig     `mapstructure:"feishu"`
-	HTTP       HTTPConfig       `mapstructure:"http"`
-	Local      LocalConfig      `mapstructure:"local"`
-	Enrichment EnrichmentConfig `mapstructure:"enrichment"`
+	Tika        TikaConfig        `mapstructure:"tika"`
+	Feishu      FeishuConfig      `mapstructure:"feishu"`
+	HTTP        HTTPConfig        `mapstructure:"http"`
+	Local       LocalConfig       `mapstructure:"local"`
+	Enrichment  EnrichmentConfig  `mapstructure:"enrichment"`
+	ChunkRouter ChunkRouterConfig `mapstructure:"chunkRouter"`
 }
 
 // EnrichmentConfig 控制 ingestion 阶段的 LLM 加工节点（Enhancer / Enricher）。
@@ -28,6 +29,40 @@ func (c EnrichmentConfig) EnricherConcurrency() int {
 		return 4
 	}
 	return c.Concurrency
+}
+
+// ChunkRouterConfig 控制 ingestion 阶段的 chunk 级 LLM 意图路由（标配 A）。
+//
+// Enabled=false 时不挂 ChunkRouterNode，整篇文档共用 doc.TargetPartition——
+// 与未启用 chunk routing 时行为一致。
+type ChunkRouterConfig struct {
+	Enabled             bool    `mapstructure:"enabled"`
+	MinScore            float64 `mapstructure:"minScore"`            // 低于该分数回退 doc 级 partition
+	Concurrency         int     `mapstructure:"concurrency"`         // 并发跑的 batch 数；0 → 默认 4
+	BatchSize           int     `mapstructure:"batchSize"`           // 单次 LLM 调用塞多少 chunk；0 → 默认 8
+	MaxRetries          int     `mapstructure:"maxRetries"`          // LLM 调用最大重试次数；0 → 默认 2
+	AutoCreatePartition bool    `mapstructure:"autoCreatePartition"` // IndexerNode 写入前自动建缺失 partition
+}
+
+func (c ChunkRouterConfig) RouterConcurrency() int {
+	if c.Concurrency <= 0 {
+		return 4
+	}
+	return c.Concurrency
+}
+
+func (c ChunkRouterConfig) RouterBatchSize() int {
+	if c.BatchSize <= 0 {
+		return 8
+	}
+	return c.BatchSize
+}
+
+func (c ChunkRouterConfig) RouterMaxRetries() int {
+	if c.MaxRetries <= 0 {
+		return 2
+	}
+	return c.MaxRetries
 }
 
 type TikaConfig struct {

@@ -12,7 +12,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// Recovery 捕获 handler 中的 panic，记录日志并返回统一 500 错误响应。
+// Recovery 捕获 handler 中的 panic，并写出统一错误响应。
+//
+// panic 值如果是 AppError，会复用统一错误分类逻辑；其他 panic 会记录日志并返回
+// 服务端错误。
 func Recovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
@@ -20,7 +23,7 @@ func Recovery() gin.HandlerFunc {
 				if c.Writer.Written() {
 					return
 				}
-				// panic 值是 AppError（或包装）→ 走统一分类响应
+				// AppError 或包装了 AppError 的 panic 走统一分类响应。
 				if err, ok := r.(error); ok {
 					var appErr *apperror.AppError
 					if errors.As(err, &appErr) {

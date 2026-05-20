@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ErrorHandler 将 gin.Context 中收集到的错误转换为统一 HTTP 响应。
 func ErrorHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
@@ -25,21 +26,22 @@ func ErrorHandler() gin.HandlerFunc {
 }
 
 // HandleError 是给 handler 显式调用的便捷函数。
-// 等价于：c.Error(err); c.Abort()；立即写响应。
+//
+// 它会立即中断请求并写出统一错误响应。
 // 适合在出错后想立刻中断的场景。
 func HandleError(c *gin.Context, err error) {
 	c.Abort()
 	writeErrorResponse(c, err)
 }
 
-// writeErrorResponse 是响应写入的单点实现，供 Recovery / ErrorHandler / HandleError 共用
+// writeErrorResponse 是错误响应写入的单点实现。
 func writeErrorResponse(c *gin.Context, err error) {
-	// 已写过响应则跳过（避免重复写）
+	// 已写过响应则跳过，避免重复写入。
 	if c.Writer.Written() {
 		return
 	}
 
-	// 1. 参数校验错误
+	// 参数校验错误返回 400，并尽量给出首个字段的校验提示。
 	var valErrs validator.ValidationErrors
 	if errors.As(err, &valErrs) {
 		msg := firstValidationMessage(valErrs)
@@ -51,7 +53,7 @@ func writeErrorResponse(c *gin.Context, err error) {
 		return
 	}
 
-	// 2. AppError
+	// AppError 按错误类别映射 HTTP 状态码，同时保留业务错误码。
 	var appErr *apperror.AppError
 	if errors.As(err, &appErr) {
 		status := httpStatusFor(appErr.Kind())
@@ -66,7 +68,7 @@ func writeErrorResponse(c *gin.Context, err error) {
 		return
 	}
 
-	// 3. 兜底
+	// 未识别错误统一隐藏细节，避免把内部异常暴露给调用方。
 	zap.L().Error("unhandled error",
 		zap.String("path", c.Request.URL.Path),
 		zap.Error(err),
@@ -83,18 +85,18 @@ func httpStatusFor(kind apperror.Kind) int {
 	case apperror.KindRemote:
 		return http.StatusBadGateway
 	case apperror.KindService:
-		// fallthrough 代表继续往下执行下一个 case 的代码块，直到遇到 break 或 switch 结束。
 		fallthrough
 	default:
 		return http.StatusInternalServerError
 	}
 }
 
+// firstValidationMessage 返回参数校验错误中的首个字段提示。
 func firstValidationMessage(errs validator.ValidationErrors) string {
 	if len(errs) == 0 {
 		return errorcode.ClientError.Message()
 	}
 	fe := errs[0]
-	// 可按需扩展：根据 tag 定制消息（如 required / email / min）
+	// 后续可按 tag 扩展更友好的提示，例如 required、email、min。
 	return fe.Field() + " " + fe.Tag()
 }

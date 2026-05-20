@@ -2,8 +2,9 @@ package idgen
 
 import (
 	"fmt"
-	"github.com/bwmarrin/snowflake"
 	"sync"
+
+	"github.com/bwmarrin/snowflake"
 )
 
 var (
@@ -11,7 +12,9 @@ var (
 	node *snowflake.Node
 )
 
-// Init 在 main.go 启动时调用一次，nodeID 取值范围 0–1023。
+// Init 初始化全局 Snowflake 节点。
+//
+// Init 应在服务启动时调用一次；nodeID 取值范围由 snowflake 库约束为 0-1023。
 func Init(nodeID int64) {
 	once.Do(func() {
 		var err error
@@ -22,12 +25,12 @@ func Init(nodeID int64) {
 	})
 }
 
-// NewID 返回 int64 类型的 Snowflake ID，用于数据库主键。
+// NewID 生成 int64 类型的 Snowflake ID，通常用于数据库主键。
 func NewID() int64 {
 	return node.Generate().Int64()
 }
 
-// NewStringID 返回字符串类型的 Snowflake ID，用于 chunkId 等业务 ID。
+// NewStringID 生成字符串类型的 Snowflake ID，通常用于对外业务 ID。
 func NewStringID() string {
 	return node.Generate().String()
 }

@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Logger 记录每个请求的 method / path / status / latency。
+// Logger 记录每个 HTTP 请求的方法、路径、状态码、耗时和客户端 IP。
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()

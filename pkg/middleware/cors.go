@@ -6,8 +6,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CORS 允许所有来源跨域，对齐 Java 端 WebConfig.addCorsMappings。
-// 对 OPTIONS 预检请求直接返回 204，不再往后执行。
+// CORS 返回允许所有来源访问的跨域中间件。
+//
+// OPTIONS 预检请求会直接返回 204，不再继续执行后续 handler。
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")

@@ -11,7 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Auth 验证 Authorization: Bearer <token> 头，解析成功后将用户信息写入 context。
+// Auth 验证 Authorization: Bearer <token> 请求头。
+//
+// token 解析成功后，Auth 会将登录用户信息写入 usercontext，供后续 handler 使用。
 func Auth(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
@@ -37,7 +39,7 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
-// RequireRole 检查当前用户是否有指定角色，用于 admin 路由保护。
+// RequireRole 检查当前登录用户是否拥有指定角色。
 func RequireRole(role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		current := usercontext.Role(c)

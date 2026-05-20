@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// UserClaims 是写入 JWT payload 的业务字段。
+// UserClaims 是写入 JWT payload 的登录用户信息。
 type UserClaims struct {
 	UserID   string `json:"userId"`
 	Username string `json:"username"`
@@ -16,7 +16,7 @@ type UserClaims struct {
 	jwt.RegisteredClaims
 }
 
-// Sign 用 HS256 算法签发一个 JWT，ttl 控制有效期。
+// Sign 使用 HS256 算法签发 JWT，并通过 ttl 控制有效期。
 func Sign(claims UserClaims, secret string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims.RegisteredClaims = jwt.RegisteredClaims{
@@ -26,7 +26,7 @@ func Sign(claims UserClaims, secret string, ttl time.Duration) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 }
 
-// Parse 验证签名并解析 token，返回 UserClaims。
+// Parse 验证 JWT 签名和有效期，并返回其中的用户信息。
 func Parse(tokenStr, secret string) (*UserClaims, error) {
 	var claims UserClaims
 	token, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {

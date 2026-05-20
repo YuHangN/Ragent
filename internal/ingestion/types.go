@@ -21,13 +21,18 @@ type DocumentSource struct {
 // EnricherNode 拼出的"喂给 embedding 模型的文本"（原文 + 摘要 + 生成的问题），
 // 为空时 EmbedderNode 退回用 Content。这种 embed-different-from-display 模式让
 // 检索向量反映增强信息，但不需要改任何 DB schema。
+//
+// TargetPartition 是 ChunkRouterNode 决定的目标 Milvus partition；空值由 indexer
+// 退回到 ic.PartitionName（doc 级 fallback），再退回到 "_default"。
+// Metadata 在 ChunkRouterNode 里会被写入 "routing" 键，记录路由决策详情。
 type VectorChunk struct {
-	ChunkID   string         // snowflake ID，同时作为 MySQL 主键和 Milvus 主键
-	Index     int            // position within document, 0-based
-	Content   string         // raw text content（原文，存库 + 展示）
-	EmbedText string         // 用于 embedding 的增强文本；空则退回 Content
-	Metadata  map[string]any // arbitrary key-value pairs attached by enrichers
-	Embedding []float32      // filled by EmbedderNode
+	ChunkID         string         // snowflake ID，同时作为 MySQL 主键和 Milvus 主键
+	Index           int            // position within document, 0-based
+	Content         string         // raw text content（原文，存库 + 展示）
+	EmbedText       string         // 用于 embedding 的增强文本；空则退回 Content
+	TargetPartition string         // chunk 级 partition；空时回退到 doc 级 PartitionName
+	Metadata        map[string]any // 由 enrichers / router 填充
+	Embedding       []float32      // filled by EmbedderNode
 }
 
 // IngestionContext is the mutable state passed through every pipeline node.

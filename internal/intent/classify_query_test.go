@@ -51,7 +51,7 @@ func TestClassify_FiltersByMinScore(t *testing.T) {
 	llm := &stubLLM{resp: `[{"node_id":1,"score":0.9},{"node_id":2,"score":0.3}]`}
 	cls := NewClassifier(llm, repo)
 
-	got, err := cls.Classify(context.Background(), 100, "Q", 5, 0.5)
+	got, err := cls.ClassifyQuery(context.Background(), 100, "Q", 5, 0.5)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, int64(1), got[0].NodeID)
@@ -66,7 +66,7 @@ func TestClassify_HandlesMarkdownCodeFence(t *testing.T) {
 	llm := &stubLLM{resp: "```json\n[{\"node_id\":1,\"score\":0.8}]\n```"}
 	cls := NewClassifier(llm, repo)
 
-	got, err := cls.Classify(context.Background(), 1, "Q", 5, 0.5)
+	got, err := cls.ClassifyQuery(context.Background(), 1, "Q", 5, 0.5)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 }
@@ -75,7 +75,7 @@ func TestClassify_NoClassifiableNodes(t *testing.T) {
 	repo := &stubRepo{classifiable: nil}
 	cls := NewClassifier(&stubLLM{}, repo)
 
-	got, err := cls.Classify(context.Background(), 1, "Q", 5, 0.5)
+	got, err := cls.ClassifyQuery(context.Background(), 1, "Q", 5, 0.5)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }

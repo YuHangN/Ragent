@@ -39,7 +39,7 @@ func (r *Resolver) Resolve(ctx context.Context, kbID int64, subQuestions []strin
 	for i, sub := range subs {
 		i, sub := i, sub
 		g.Go(func() error {
-			candidates, err := r.classifier.Classify(gctx, kbID, sub, r.MaxIntents, r.MinScore)
+			candidates, err := r.classifier.ClassifyQuery(gctx, kbID, sub, r.MaxIntents, r.MinScore)
 			if err != nil {
 				return fmt.Errorf("resolve sub %q: %w", sub, err)
 			}

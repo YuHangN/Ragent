@@ -1,8 +1,7 @@
-// Package admin 实现 RAG 系统的运维侧能力：链路追踪、概览统计、运维工具。
+// Package admin 提供 RAG 系统的运维接口与链路追踪能力。
 //
-// 当前 MVP 只覆盖链路追踪——记录每次 chat 请求的耗时与结果，供后续 SQL 查询
-// "哪些请求慢"、"哪些请求失败"、"哪些 chunks 召回为空"。Dashboard 高级 KPI、
-// 趋势图、分位数等留待后续阶段补。
+// 本文件定义 chat 请求的 trace 持久化模型，用于记录耗时、结果和关键检索摘要，
+// 便于排查慢请求、失败请求以及召回为空等问题。
 package admin
 
 import (
@@ -12,11 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// TraceRecord 对应 t_rag_trace 表，每次 chat 请求一条。
+// TraceRecord 对应 t_rag_trace 表，每次 chat 请求写入一条记录。
 //
-// 字段选择遵循"保守字段集"原则：先记 chat-level 汇总，不细分 rewrite/intent/
-// retrieve/rerank 阶段；发现需要再加列。SubQuestionsJSON 用 JSON 字符串存，
-// 避免新建关联表。Success 用 int(0/1) 而不是 bool，便于 SQL 索引和 GROUP BY。
+// 当前模型记录 chat 级别的汇总信息，不拆分到 rewrite、intent、retrieve、
+// rerank 等更细阶段。SubQuestionsJSON 使用 JSON 字符串保存，避免为只读观测
+// 数据额外引入关联表；Success 使用 int(0/1)，便于 SQL 索引和聚合统计。
 type TraceRecord struct {
 	ID               int64          `gorm:"primaryKey"`
 	ConversationID   int64          `gorm:"column:conversation_id;index"`
@@ -35,10 +34,10 @@ type TraceRecord struct {
 	DeletedAt        gorm.DeletedAt `gorm:"column:deleted;index"`
 }
 
-// TableName 返回表名。
+// TableName 返回 trace 表名。
 func (TraceRecord) TableName() string { return "t_rag_trace" }
 
-// BeforeCreate 给 trace 分配 snowflake ID，避免依赖 MySQL 自增。
+// BeforeCreate 在写入前分配 snowflake ID，避免依赖 MySQL 自增主键。
 func (t *TraceRecord) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = idgen.NewID()

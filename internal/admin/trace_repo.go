@@ -1,16 +1,12 @@
-// Package admin 实现 RAG 系统的运维侧能力：链路追踪、概览统计、运维工具。
+// Package admin 提供 RAG 系统的运维接口与链路追踪能力。
 //
-// 本文件提供 TraceRecord 的数据访问。trace 数据特点是"写多读少 + 不可变事实"，
-// 因此接口故意不暴露 Update / Delete——误改会丢失审计价值；GORM 软删除字段保留
-// 是为了与项目其它表的清理策略一致。
+// 本文件封装 TraceRecord 的数据访问。trace 记录属于写多读少的观测事实，
+// 主接口只提供新增和查询能力；清理、归档等维护操作应放在专门的运维流程中。
 package admin
 
 import "gorm.io/gorm"
 
 // TraceRepo 是 RAG 链路追踪记录的数据访问接口。
-//
-// 只提供 Insert（写入新 trace）+ List/FindByID（读取查询）。需要批量删除或
-// 归档时由专门的 admin 工具实现，不污染主接口。
 type TraceRepo interface {
 	Insert(t *TraceRecord) error
 	List(limit, offset int) ([]TraceRecord, int64, error)
@@ -19,7 +15,7 @@ type TraceRepo interface {
 
 type gormTraceRepo struct{ db *gorm.DB }
 
-// NewTraceRepo 构造默认实现。
+// NewTraceRepo 创建基于 GORM 的 TraceRepo 实现。
 func NewTraceRepo(db *gorm.DB) TraceRepo {
 	return &gormTraceRepo{db: db}
 }
@@ -28,10 +24,7 @@ func (r *gormTraceRepo) Insert(t *TraceRecord) error {
 	return r.db.Create(t).Error
 }
 
-// List 按 create_time 倒序返回 trace 列表，最近的在前。
-//
-// 不支持按 conversation_id / user_id 过滤——MVP 不上线运维筛选 UI，直接 SQL
-// 查更灵活。后续 dashboard 阶段会加 ListByXxx 方法。
+// List 按 create_time 倒序返回 trace 列表，最近的记录在前。
 func (r *gormTraceRepo) List(limit, offset int) ([]TraceRecord, int64, error) {
 	if limit <= 0 {
 		limit = 20

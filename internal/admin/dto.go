@@ -1,8 +1,8 @@
-// Package admin 实现 RAG 系统的运维侧能力：链路追踪、概览统计、运维工具。
+// Package admin 提供 RAG 系统的运维接口与链路追踪能力。
 //
-// 本文件定义 trace HTTP 接口的 wire 形态。两个约定：
-//   - 所有 ID 用 string，避免前端处理 int64 精度丢失
-//   - 列表与详情用不同 DTO——列表不返回 question 全文等重字段，控制响应体积
+// 本文件定义 trace HTTP 接口的传输结构。对外 ID 统一使用 string，避免前端
+// 处理 int64 时发生精度丢失；列表与详情拆分 DTO，避免列表接口返回问题全文、
+// 子问题等重字段。
 package admin
 
 import (
@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// TraceListItem 是列表页用的精简 trace 形态。
+// TraceListItem 是 trace 列表页使用的轻量结构。
 //
-// 故意只带 questionPreview（截断）而非全文，也不带 rewrittenQuery /
-// subQuestions——列表接口可能一次返回几十条，重字段会让响应体积爆炸。
+// 列表接口只返回截断后的 questionPreview，不返回问题全文、改写查询和子问题，
+// 以控制批量查询时的响应体积。
 type TraceListItem struct {
 	ID              string    `json:"id"`
 	ConversationID  string    `json:"conversationId"`
@@ -25,7 +25,7 @@ type TraceListItem struct {
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
-// TraceDetail 是详情接口的完整形态，带上所有阶段耗时与错误信息。
+// TraceDetail 是 trace 详情页使用的完整结构，包含阶段耗时和错误信息。
 type TraceDetail struct {
 	ID               string    `json:"id"`
 	ConversationID   string    `json:"conversationId"`
@@ -43,10 +43,10 @@ type TraceDetail struct {
 	CreatedAt        time.Time `json:"createdAt"`
 }
 
-// questionPreviewMaxRunes 控制列表页问题预览的最大字符数。
+// questionPreviewMaxRunes 是列表页问题预览的最大 rune 数。
 const questionPreviewMaxRunes = 50
 
-// toListItem 把存储模型转列表 wire 形态，question 按 rune 截断。
+// toListItem 将存储模型转换为列表传输结构，并按 rune 截断问题预览。
 func toListItem(t TraceRecord) TraceListItem {
 	preview := t.Question
 	if r := []rune(preview); len(r) > questionPreviewMaxRunes {
@@ -64,7 +64,7 @@ func toListItem(t TraceRecord) TraceListItem {
 	}
 }
 
-// toListItems 批量转换。
+// toListItems 批量转换 trace 列表。
 func toListItems(list []TraceRecord) []TraceListItem {
 	out := make([]TraceListItem, 0, len(list))
 	for _, t := range list {
@@ -73,7 +73,7 @@ func toListItems(list []TraceRecord) []TraceListItem {
 	return out
 }
 
-// toDetail 把存储模型转详情 wire 形态。
+// toDetail 将存储模型转换为详情传输结构。
 func toDetail(t TraceRecord) TraceDetail {
 	return TraceDetail{
 		ID:               strconv.FormatInt(t.ID, 10),

@@ -16,8 +16,7 @@ import (
 
 // mockRetriever 是 ragRetriever 接口的内存桩。
 //
-// onRetrieve 由用例设置，可以在调用时观察入参（验证 history / question 传递）或
-// 返回固定结果 / 错误。无副作用，每个用例新建一个实例。
+// onRetrieve 由用例设置，可用于观察请求参数或返回固定结果和错误。
 type mockRetriever struct {
 	onRetrieve func(req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error)
 }
@@ -28,8 +27,8 @@ func (m *mockRetriever) Retrieve(_ context.Context, req retrieval.RetrieveReques
 
 // mockLLM 是 aiclient.LLMService 的内存桩。
 //
-// Chat / StreamChat 行为分别由 onChat / onStream 注入。StreamChat 桩里可以通过
-// cb 调用 OnContent / OnComplete / OnError 来模拟流事件序列。
+// Chat 和 StreamChat 行为分别由 onChat、onStream 注入；流式用例可通过回调模拟
+// delta、完成和错误事件。
 type mockLLM struct {
 	onChat   func(req aiclient.ChatRequest) (string, error)
 	onStream func(req aiclient.ChatRequest, cb aiclient.StreamCallback) error
@@ -43,7 +42,7 @@ func (m *mockLLM) StreamChat(_ context.Context, req aiclient.ChatRequest, cb aic
 	return m.onStream(req, cb)
 }
 
-// captureCallback 收集 ChatService.StreamMessage 的回调事件，供测试断言时序。
+// captureCallback 收集 StreamMessage 的回调事件，供测试断言时序。
 type captureCallback struct {
 	deltas   []string
 	complete bool
@@ -64,7 +63,7 @@ func (c *captureCallback) OnError(err error) {
 	c.errs = append(c.errs, err)
 }
 
-// captureRecorder 收集 ChatService 落下的每条 trace，供测试断言耗时与结果。
+// captureRecorder 收集 ChatService 记录的 trace，供测试断言耗时与结果。
 type captureRecorder struct {
 	records []*admin.TraceRecord
 }
@@ -73,17 +72,16 @@ func (c *captureRecorder) Record(t *admin.TraceRecord) {
 	c.records = append(c.records, t)
 }
 
-// newTestChat 构造一组测试用的 ChatService + 底层 repo，方便用例直接断言落库状态。
+// newTestChat 创建测试用的 ChatService 和底层 repo，便于断言落库状态。
 func newTestChat(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, *mockRepo) {
 	t.Helper()
 	repo := newMockRepo()
 	conv := NewConversationService(repo)
-	// recorder 传 nil → NewChatService 内部退化为 noopRecorder，测试不关心 trace 落库。
+	// recorder 为 nil 时会退化为空实现；这些用例不关心 trace 落库。
 	return NewChatService(conv, rag, llm, nil), repo
 }
 
-// newTestChatWithRecorder 与 newTestChat 相同，但额外注入一个 captureRecorder，
-// 供需要断言 trace 内容的用例使用。
+// newTestChatWithRecorder 创建带 captureRecorder 的测试 ChatService。
 func newTestChatWithRecorder(t *testing.T, rag *mockRetriever, llm *mockLLM) (*ChatService, *mockRepo, *captureRecorder) {
 	t.Helper()
 	repo := newMockRepo()
@@ -92,7 +90,7 @@ func newTestChatWithRecorder(t *testing.T, rag *mockRetriever, llm *mockLLM) (*C
 	return NewChatService(conv, rag, llm, rec), repo, rec
 }
 
-// fixedChunks 是用例共用的两条假 chunk，模拟 RAG 召回。
+// fixedChunks 返回用例共用的假召回片段。
 func fixedChunks() []retrieval.RetrievedChunk {
 	return []retrieval.RetrievedChunk{
 		{ID: "c1", Content: "chunk one", Score: 0.9, KbID: 1},
@@ -100,8 +98,7 @@ func fixedChunks() []retrieval.RetrievedChunk {
 	}
 }
 
-// fixedRetrieveResult 构造一个标准的 RAG 返回值，messages 是任意非空切片即可，
-// chat_service 只把它原样喂给 LLM 桩，不解析内容。
+// fixedRetrieveResult 构造标准 RAG 返回值；messages 只需满足后续 LLM 调用即可。
 func fixedRetrieveResult() *retrieval.RetrieveResult {
 	return &retrieval.RetrieveResult{
 		RewrittenQuery: "rewritten",
@@ -113,8 +110,8 @@ func fixedRetrieveResult() *retrieval.RetrieveResult {
 
 // ──── SendMessage ────────────────────────────────────────
 
-// TestSendMessage_HappyPath 验证同步问答端到端：user 与 assistant 消息都落库，
-// 返回结构带正确的 answer + chunks。
+// TestSendMessage_HappyPath 验证同步问答端到端会落库 user 和 assistant 消息，
+// 并返回 answer 与 chunks。
 func TestSendMessage_HappyPath(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
@@ -137,7 +134,7 @@ func TestSendMessage_HappyPath(t *testing.T) {
 	assert.Equal(t, "RAG 是检索增强生成", resp.Answer)
 	assert.Len(t, resp.Chunks, 2)
 
-	// 应该两条消息：user + assistant
+	// 成功路径应写入 user 和 assistant 两条消息。
 	msgs := repo.msgs[conv.ID]
 	require.Len(t, msgs, 2)
 	assert.Equal(t, aiclient.RoleUser, msgs[0].Role)
@@ -148,8 +145,8 @@ func TestSendMessage_HappyPath(t *testing.T) {
 	assert.Contains(t, msgs[1].ChunksJSON, `"c1"`, "assistant 消息应带 chunks_json")
 }
 
-// TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant 验证 RAG 失败时
-// user 消息保留、assistant 不落库——半成品答案不能污染未来历史。
+// TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant 验证 RAG 失败时保留
+// user 消息，但不写 assistant 消息。
 func TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return nil, errors.New("milvus down")
@@ -173,7 +170,7 @@ func TestSendMessage_RetrieveFailure_KeepsUserSkipsAssistant(t *testing.T) {
 	assert.Equal(t, aiclient.RoleUser, msgs[0].Role)
 }
 
-// TestSendMessage_LLMFailure_KeepsUserSkipsAssistant 验证 LLM 失败时也只落 user 消息。
+// TestSendMessage_LLMFailure_KeepsUserSkipsAssistant 验证 LLM 失败时也只写 user 消息。
 func TestSendMessage_LLMFailure_KeepsUserSkipsAssistant(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
@@ -196,8 +193,7 @@ func TestSendMessage_LLMFailure_KeepsUserSkipsAssistant(t *testing.T) {
 }
 
 // TestSendMessage_PassesHistoryWithoutCurrentQuestion 验证传给 RAG 的 history
-// 不含本次提问——LoadHistory 必须在 AppendMessage(user) 之前调用，否则本次问题
-// 会被回放给 RAG 当作"先前历史"。
+// 不含本次提问。
 func TestSendMessage_PassesHistoryWithoutCurrentQuestion(t *testing.T) {
 	var capturedHistory []aiclient.ChatMessage
 	rr := &mockRetriever{onRetrieve: func(req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
@@ -224,8 +220,8 @@ func TestSendMessage_PassesHistoryWithoutCurrentQuestion(t *testing.T) {
 
 // ──── StreamMessage ───────────────────────────────────────
 
-// TestStreamMessage_HappyPath_AccumulatesDeltas 验证流式正常路径：
-// delta 实时回调 + 流结束后才发 OnComplete + assistant 消息一次性落库。
+// TestStreamMessage_HappyPath_AccumulatesDeltas 验证流式正常路径会实时回调 delta，
+// 并在流结束后完成落库和 OnComplete。
 func TestStreamMessage_HappyPath_AccumulatesDeltas(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
@@ -247,16 +243,16 @@ func TestStreamMessage_HappyPath_AccumulatesDeltas(t *testing.T) {
 	}, cap)
 	require.NoError(t, err)
 
-	// delta 顺序与发出顺序一致
+	// delta 顺序与发出顺序一致。
 	assert.Equal(t, []string{"Hello", ", ", "world"}, cap.deltas)
 
-	// OnComplete 被调用，answer 等于所有 delta 拼接
+	// OnComplete 被调用，answer 等于所有 delta 拼接。
 	assert.True(t, cap.complete)
 	assert.Equal(t, "Hello, world", cap.answer)
 	assert.Len(t, cap.chunks, 2)
 	assert.Empty(t, cap.errs)
 
-	// assistant 消息一次性落库，content 与累积 answer 一致
+	// assistant 消息一次性落库，content 与累积 answer 一致。
 	msgs := repo.msgs[conv.ID]
 	require.Len(t, msgs, 2)
 	assert.Equal(t, aiclient.RoleAssistant, msgs[1].Role)
@@ -264,9 +260,8 @@ func TestStreamMessage_HappyPath_AccumulatesDeltas(t *testing.T) {
 	assert.Contains(t, msgs[1].ChunksJSON, `"c1"`)
 }
 
-// TestStreamMessage_LLMFailure_DoesNotPersistAssistant 验证流式 LLM 失败时
-// 不写 assistant，避免半成品答案污染历史；OnError 由 LLMService 内部已发，
-// StreamMessage 不再重复发。
+// TestStreamMessage_LLMFailure_DoesNotPersistAssistant 验证流式 LLM 失败时不写
+// assistant，并且不重复发送 OnError。
 func TestStreamMessage_LLMFailure_DoesNotPersistAssistant(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
@@ -274,7 +269,7 @@ func TestStreamMessage_LLMFailure_DoesNotPersistAssistant(t *testing.T) {
 	streamErr := errors.New("stream cut")
 	llm := &mockLLM{onStream: func(_ aiclient.ChatRequest, cb aiclient.StreamCallback) error {
 		cb.OnContent("partial")
-		cb.OnError(streamErr) // 模拟 aiclient.LLMService 失败前已通知 cb
+		cb.OnError(streamErr) // 模拟 LLMService 在返回错误前已通知回调。
 		return streamErr
 	}}
 
@@ -288,18 +283,18 @@ func TestStreamMessage_LLMFailure_DoesNotPersistAssistant(t *testing.T) {
 	}, cap)
 	require.ErrorIs(t, err, streamErr)
 
-	// OnError 应只被发一次（由 LLM 桩内部发，StreamMessage 不重复发）
+	// OnError 应只发送一次。
 	require.Len(t, cap.errs, 1, "OnError 不应被 StreamMessage 重复触发")
 	assert.False(t, cap.complete, "失败路径不应发 OnComplete")
 
-	// DB 里只剩 user 消息，assistant 没落
+	// DB 中只保留 user 消息，不写 assistant。
 	msgs := repo.msgs[conv.ID]
 	require.Len(t, msgs, 1)
 	assert.Equal(t, aiclient.RoleUser, msgs[0].Role)
 }
 
-// TestStreamMessage_RetrieveFailure_ReportsOnError 验证 RAG 失败时 OnError
-// 由 StreamMessage 主动发——区别于 LLM 失败的"已发不重发"。
+// TestStreamMessage_RetrieveFailure_ReportsOnError 验证 RAG 失败时由 StreamMessage
+// 主动发送 OnError。
 func TestStreamMessage_RetrieveFailure_ReportsOnError(t *testing.T) {
 	retrieveErr := errors.New("milvus down")
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
@@ -327,8 +322,8 @@ func TestStreamMessage_RetrieveFailure_ReportsOnError(t *testing.T) {
 
 // ──── trace 记录 ─────────────────────────────────────────
 
-// TestSendMessage_RecordsSuccessTrace 验证同步问答成功时落一条 Success=1 的 trace，
-// 且关键字段（用户、改写后 query、chunks 数）都被填上。
+// TestSendMessage_RecordsSuccessTrace 验证同步问答成功时会记录 Success=1 的 trace，
+// 并填充用户、改写查询和 chunks 数等关键字段。
 func TestSendMessage_RecordsSuccessTrace(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil
@@ -359,8 +354,7 @@ func TestSendMessage_RecordsSuccessTrace(t *testing.T) {
 	assert.GreaterOrEqual(t, tr.TotalMs, int64(0))
 }
 
-// TestSendMessage_RecordsFailureTrace 验证 RAG 失败时也落 trace，Success=0、
-// ErrorMessage 非空——失败请求同样要被观测到。
+// TestSendMessage_RecordsFailureTrace 验证 RAG 失败时也会记录失败 trace。
 func TestSendMessage_RecordsFailureTrace(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return nil, errors.New("milvus down")
@@ -386,7 +380,7 @@ func TestSendMessage_RecordsFailureTrace(t *testing.T) {
 	assert.Zero(t, tr.LLMMs, "RAG 失败时 LLM 阶段未到达，耗时应为 0")
 }
 
-// TestStreamMessage_RecordsSuccessTrace 验证流式问答成功时也落一条 Success=1 的 trace。
+// TestStreamMessage_RecordsSuccessTrace 验证流式问答成功时也会记录成功 trace。
 func TestStreamMessage_RecordsSuccessTrace(t *testing.T) {
 	rr := &mockRetriever{onRetrieve: func(_ retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error) {
 		return fixedRetrieveResult(), nil

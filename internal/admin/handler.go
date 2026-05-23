@@ -1,7 +1,6 @@
-// Package admin 实现 RAG 系统的运维侧能力：链路追踪、概览统计、运维工具。
+// Package admin 提供 RAG 系统的运维接口与链路追踪能力。
 //
-// 本文件提供 trace 的 HTTP 入口：列表 + 详情。MVP 不做筛选 / 聚合 / 趋势图，
-// 那些留待后续 dashboard 阶段。
+// 本文件提供 trace 的 HTTP 入口，包括列表查询和详情查询。
 package admin
 
 import (
@@ -13,22 +12,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler 是 admin 模块的 HTTP 入口。
+// Handler 是 admin 模块的 HTTP 处理器。
 //
-// MVP 只持有 TraceRepo——纯读路径，没有业务规则，不需要 service 层。后续加
-// dashboard 聚合统计时再引入 DashboardService。
+// 当前接口只编排 TraceRepo 的读路径，暂不引入额外 service 层。
 type Handler struct {
 	repo TraceRepo
 }
 
-// NewHandler 构造 admin Handler。
+// NewHandler 创建 admin Handler。
 func NewHandler(repo TraceRepo) *Handler {
 	return &Handler{repo: repo}
 }
 
-// ListTraces 返回 trace 列表。GET /admin/traces?limit=&offset=
+// ListTraces 处理 GET /admin/traces?limit=&offset=，返回 trace 列表。
 //
-// 按 create_time 倒序，最近的在前。limit / offset 缺省时由 Repo 兜底。
+// 结果按 create_time 倒序排列，limit 和 offset 缺省值由 Repo 兜底。
 func (h *Handler) ListTraces(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
@@ -44,7 +42,7 @@ func (h *Handler) ListTraces(c *gin.Context) {
 	}))
 }
 
-// GetTrace 返回单条 trace 详情。GET /admin/traces/:id
+// GetTrace 处理 GET /admin/traces/:id，返回单条 trace 详情。
 func (h *Handler) GetTrace(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

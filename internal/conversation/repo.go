@@ -1,17 +1,15 @@
-// Package conversation 实现 RAG Chat 的会话管理与对话主链路。
+// Package conversation 提供 RAG Chat 的会话管理与问答链路。
 //
-// 本文件提供 Conversation 与 Message 两张表的数据访问。两张表语义紧耦合
-// （消息必属于会话），所以合并到一个 Repo 接口，避免上层为了拉历史多注入一个
-// 依赖。GORM DeletedAt 字段使所有读路径默认排除软删除记录。
+// 本文件封装 Conversation 与 Message 两张表的数据访问。消息从属于会话，因此
+// 统一放在一个 Repo 接口中，便于上层按会话维度读写历史。
 package conversation
 
 import "gorm.io/gorm"
 
 // ConversationRepo 是会话与消息的统一数据访问接口。
 //
-// 它故意只暴露 ConversationService 真正需要的方法：会话级 CRUD + 列表分页，
-// 消息级 Append + 倒序拉最近 N 条。任何更复杂的查询（按时间区间、按 role
-// 过滤等）都应该新增方法，避免上层直接拼 SQL。
+// 接口只暴露当前业务层需要的会话 CRUD、分页列表、消息追加和最近消息读取能力。
+// 更复杂的查询应通过新增方法表达，避免上层直接拼接 SQL。
 type ConversationRepo interface {
 	CreateConversation(c *Conversation) error
 	UpdateConversation(c *Conversation) error
@@ -20,14 +18,13 @@ type ConversationRepo interface {
 	ListConversationsByUser(userID int64, limit, offset int) ([]Conversation, int64, error)
 
 	AppendMessage(m *Message) error
-	// ListMessages 返回该会话最近 limit 条消息，按 create_time 升序返回，
-	// 直接喂给 LLM 作为多轮上下文。
+	// ListMessages 返回会话最近 limit 条消息，并按 create_time 升序排列。
 	ListMessages(conversationID int64, limit int) ([]Message, error)
 }
 
 type gormConversationRepo struct{ db *gorm.DB }
 
-// NewConversationRepo 构造默认实现。
+// NewConversationRepo 创建基于 GORM 的 ConversationRepo 实现。
 func NewConversationRepo(db *gorm.DB) ConversationRepo {
 	return &gormConversationRepo{db: db}
 }
@@ -52,8 +49,7 @@ func (r *gormConversationRepo) FindConversationByID(id int64) (*Conversation, er
 	return &c, nil
 }
 
-// ListConversationsByUser 返回用户名下会话列表，按 update_time 倒序，
-// 与 ChatGPT 风格一致：最近活跃的会话排在最上面。
+// ListConversationsByUser 返回用户会话列表，按 update_time 倒序排列。
 func (r *gormConversationRepo) ListConversationsByUser(userID int64, limit, offset int) ([]Conversation, int64, error) {
 	var list []Conversation
 	var total int64
@@ -71,10 +67,10 @@ func (r *gormConversationRepo) AppendMessage(m *Message) error {
 	return r.db.Create(m).Error
 }
 
-// ListMessages 取最近 limit 条消息，按 create_time 升序返回。
+// ListMessages 读取最近 limit 条消息，并按 create_time 升序返回。
 //
-// SQL 语义上是先按时间倒序拉 N 条（避开全表扫描），再原地反转交给上层，
-// 保证 chat 历史是"早 → 晚"顺序，方便直接拼 LLM 多轮上下文。
+// 查询时先按时间倒序取最近 N 条，再在内存中反转，保证返回值可直接作为从早到晚
+// 的多轮上下文。
 func (r *gormConversationRepo) ListMessages(conversationID int64, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 20

@@ -11,8 +11,8 @@ import (
 
 // mockRepo 是测试用的内存版 ConversationRepo。
 //
-// 用 map 模拟存储；ID 由 nextID 分配，模拟 BeforeCreate 钩子。所有方法都不返回
-// gorm 真实错误，只在"找不到会话"这种语义错时返回 sentinel，让用例可断言。
+// 它用 map 模拟存储，并通过 nextID 模拟 ID 分配；找不到会话时返回 sentinel
+// error，便于用例断言。
 type mockRepo struct {
 	convs map[int64]*Conversation
 	msgs  map[int64][]Message
@@ -84,7 +84,7 @@ func (m *mockRepo) ListMessages(cid int64, limit int) ([]Message, error) {
 
 // TestCreateSession_StoresUserAndKbIDs 验证创建会话时会保存用户 ID 和知识库范围。
 //
-// title 传空串时不自动生成标题；标题自动填充由 AppendMessage 处理。
+// title 为空时不会立即生成标题，自动标题由 AppendMessage 处理。
 func TestCreateSession_StoresUserAndKbIDs(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -98,7 +98,7 @@ func TestCreateSession_StoresUserAndKbIDs(t *testing.T) {
 
 // TestAppendMessage_AutoFillsTitleFromFirstUserMessage 验证首条用户消息会回填标题。
 //
-// 这是侧边栏会话摘要的默认来源：用户没显式传 title 时，用第一条 user 消息生成。
+// 用户没有显式设置 title 时，第一条 user 消息会成为会话摘要来源。
 func TestAppendMessage_AutoFillsTitleFromFirstUserMessage(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -110,9 +110,9 @@ func TestAppendMessage_AutoFillsTitleFromFirstUserMessage(t *testing.T) {
 	assert.Equal(t, "RAG 是什么？", updated.Title)
 }
 
-// TestAppendMessage_DoesNotOverwriteExistingTitle 验证已有标题不会被首条用户消息覆盖。
+// TestAppendMessage_DoesNotOverwriteExistingTitle 验证已有标题不会被用户消息覆盖。
 //
-// 例子：用户创建会话时手动填了“已有标题”，后续提问不应该改掉它。
+// 用户显式设置过标题后，后续提问不应改掉它。
 func TestAppendMessage_DoesNotOverwriteExistingTitle(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -138,7 +138,7 @@ func TestAppendMessage_AssistantRoleDoesNotTriggerTitleFill(t *testing.T) {
 
 // TestAppendMessage_ConversationNotFound 验证追加消息前必须先找到会话。
 //
-// 找不到会话时，service 应该返回错误，而不是创建孤立消息。
+// 找不到会话时，service 应返回错误，避免创建孤立消息。
 func TestAppendMessage_ConversationNotFound(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -148,7 +148,7 @@ func TestAppendMessage_ConversationNotFound(t *testing.T) {
 
 // TestLoadHistory_ReturnsTimeOrderedChatMessages 验证历史消息会转成 LLM 可用格式。
 //
-// LoadHistory 只暴露 role/content，不带 ChunksJSON；返回顺序沿用 repo 的时间正序。
+// LoadHistory 只暴露 role 和 content，不携带 ChunksJSON。
 func TestLoadHistory_ReturnsTimeOrderedChatMessages(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -169,7 +169,7 @@ func TestLoadHistory_ReturnsTimeOrderedChatMessages(t *testing.T) {
 
 // TestRenameTitle_OverwritesAnyExisting 验证显式重命名会覆盖旧标题。
 //
-// RenameTitle 是用户主动操作，不走自动标题的“不覆盖已有标题”规则。
+// RenameTitle 是用户主动操作，不受自动标题规则限制。
 func TestRenameTitle_OverwritesAnyExisting(t *testing.T) {
 	svc := NewConversationService(newMockRepo())
 
@@ -197,7 +197,7 @@ func TestTruncateTitle_NoTruncationUnderLimit(t *testing.T) {
 
 // TestTruncateTitle_TruncatesAtRuneBoundary 验证截断按 rune 处理。
 //
-// 中文字符是多字节 UTF-8；按 rune 截断可以避免产生乱码。
+// 中文字符是多字节 UTF-8，按 rune 截断可以避免产生乱码。
 func TestTruncateTitle_TruncatesAtRuneBoundary(t *testing.T) {
 	// 12 个中文字符，截到 5 应该是"测试一二三…"，不会截在 UTF-8 字节中间
 	got := truncateTitle("测试一二三四五六七八九十", 5)

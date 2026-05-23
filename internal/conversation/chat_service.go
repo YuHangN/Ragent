@@ -1,8 +1,8 @@
-// Package conversation 实现 RAG Chat 的会话管理与对话主链路。
+// Package conversation 提供 RAG Chat 的会话管理与问答链路。
 //
-// 本文件提供 ChatService，把"会话历史 + RAG 检索 + LLM 调用"三者串成一条链路。
-// 它通过两个最小接口分别接 RAG 与 LLM，而不是直接引用具体类型，方便单元测试时
-// 把外部副作用替换成 mock。每次问答还会把耗时与结果汇总成一条 trace 记录。
+// 本文件提供 ChatService，将会话历史、RAG 检索和 LLM 调用串成一次问答流程。
+// RAG 与 LLM 通过最小接口注入，便于测试替换外部依赖；每次问答都会汇总为一条
+// trace 记录。
 package conversation
 
 import (
@@ -16,26 +16,23 @@ import (
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 )
 
-// historyMaxMessages 控制每次 chat 时从持久化历史中加载的最大消息数。
+// historyMaxMessages 是每次 chat 从持久化历史中加载的最大消息数。
 //
-// MVP 写死 20 条，约对应 10 轮问答。后续 Phase 7.5 ConversationSummaryService
-// 会用 LLM 摘要替换远古消息，这里再改成"摘要 + 最近 N 条"模式。
+// 当前只加载最近消息，避免长会话无限增长上下文。
 const historyMaxMessages = 20
 
-// ragRetriever 是 ChatService 实际需要的 RAG 能力子集。
+// ragRetriever 是 ChatService 需要的 RAG 能力子集。
 //
-// 显式定义接口而不是直接依赖 *retrieval.RAGCoreService，是为了让单测能注入一个 mock
-// 实现，避免在 chat 测试里启 Milvus + 真 LLM。
-// 生产环境直接传 *retrieval.RAGCoreService 即可（它的 Retrieve 方法签名兼容）。
+// 显式定义接口可让单元测试注入 mock，避免启动真实检索依赖；生产环境可直接传入
+// 兼容该方法签名的 RAG 实现。
 type ragRetriever interface {
 	Retrieve(ctx context.Context, req retrieval.RetrieveRequest) (*retrieval.RetrieveResult, error)
 }
 
 // ChatService 串联会话历史、RAG 检索与 LLM 调用。
 //
-// 它本身不持有任何全局状态，所有持久化操作委托给 ConversationService，
-// RAG 与 LLM 通过注入的接口调用。recorder 用于把每次问答的耗时/结果落 trace，
-// 走 noopRecorder 时等价于不记。
+// 持久化操作委托给 ConversationService，RAG 与 LLM 通过注入接口调用。recorder
+// 用于记录每次问答的耗时和结果。
 type ChatService struct {
 	conv     *ConversationService
 	rag      ragRetriever
@@ -43,10 +40,9 @@ type ChatService struct {
 	recorder admin.TraceRecorder
 }
 
-// NewChatService 构造 ChatService。
+// NewChatService 创建 ChatService。
 //
-// 生产路径在 main.go 里传入 *retrieval.RAGCoreService 和 routingLLMService；
-// recorder 传 nil 时退化为 noopRecorder，调用方主路径不必判空。
+// recorder 为 nil 时使用空实现，调用方主路径无需判空。
 func NewChatService(conv *ConversationService, ragSvc ragRetriever, llm aiclient.LLMService, recorder admin.TraceRecorder) *ChatService {
 	if recorder == nil {
 		recorder = admin.NewNoopRecorder()
@@ -54,11 +50,10 @@ func NewChatService(conv *ConversationService, ragSvc ragRetriever, llm aiclient
 	return &ChatService{conv: conv, rag: ragSvc, llm: llm, recorder: recorder}
 }
 
-// SendRequest 是 SendMessage / StreamMessage 共用入参。
+// SendRequest 是 SendMessage 和 StreamMessage 共用的请求参数。
 //
-// TopK 为 0 时由 RAGCoreService 内部兜底（默认 5）。KbIDs 为空表示纯系统问答，
-// RAG 链路会走 SYSTEM 短路或全局兜底，由 Phase 6 内部决定。
-// UserID 仅用于 trace 归属，不参与业务逻辑。
+// TopK 为 0 时由检索链路使用默认值；KbIDs 为空表示不在请求层限定知识库范围。
+// UserID 仅用于 trace 归属，不参与问答业务逻辑。
 type SendRequest struct {
 	ConversationID int64
 	UserID         int64
@@ -69,7 +64,7 @@ type SendRequest struct {
 
 // SendResponse 是同步问答的返回结果。
 //
-// Chunks 携带本次 RAG 召回的元信息，便于前端展开引用、做 citation 跳转。
+// Chunks 携带本次 RAG 召回的元信息，供前端展示引用。
 type SendResponse struct {
 	Answer string
 	Chunks []retrieval.RetrievedChunk
@@ -78,17 +73,16 @@ type SendResponse struct {
 // SendMessage 执行同步问答链路。
 //
 // 步骤：
-//  1. LoadHistory 拉取最近 20 条上下文（不含本次问题）
+//  1. LoadHistory 拉取历史上下文，不含本次问题
 //  2. AppendMessage 持久化 user 消息
-//  3. ragCore.Retrieve 跑改写→意图→多通道检索→拼 prompt
-//  4. llm.Chat 阻塞拿完整答案
-//  5. AppendMessage 持久化 assistant 消息（携带 chunks 元信息）
+//  3. RAG Retrieve 生成 LLM 所需消息和召回片段
+//  4. LLM Chat 阻塞获取完整答案
+//  5. AppendMessage 持久化 assistant 消息，并写入 chunks 元信息
 //
-// 失败策略：第 3、4 步任意一步出错都直接返回，user 消息保留在 DB（"用户问过
-// 这一句的事实"应当存档），但不写 assistant 消息——半成品答案会污染未来历史。
+// 失败策略：RAG 或 LLM 失败时保留 user 消息，但不写 assistant 消息，避免半成品
+// 答案进入后续历史。
 //
-// 无论成功失败，defer 都会落一条 trace：阶段耗时按实际到达的步骤填，未到达的
-// 阶段保持 0。
+// 无论成功失败，defer 都会记录 trace；未到达的阶段耗时保持 0。
 func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendResponse, error) {
 	tr := newTraceBuilder(req)
 	defer func() { s.recorder.Record(tr.build()) }()
@@ -128,7 +122,7 @@ func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendRe
 		return nil, err
 	}
 
-	// chunks 序列化失败时只丢空串，不阻塞答案返回。
+	// chunks 序列化失败时写空串，不阻塞答案返回。
 	chunksJSON, _ := json.Marshal(retrieved.Chunks)
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleAssistant, answer, string(chunksJSON)); err != nil {
 		tr.markError(err)
@@ -139,11 +133,10 @@ func (s *ChatService) SendMessage(ctx context.Context, req SendRequest) (*SendRe
 	return &SendResponse{Answer: answer, Chunks: retrieved.Chunks}, nil
 }
 
-// StreamCallback 是 chat 流式回调，由 ChatService.StreamMessage 调用。
+// StreamCallback 是 ChatService.StreamMessage 使用的业务层流式回调。
 //
-// 与 aiclient.StreamCallback 的区别：这里只保留业务层关心的事件（增量内容、
-// 结束、错误），不暴露 thinking 流；OnComplete 携带完整答案与召回的 chunk，
-// 便于 HTTP 层一次性发"done"事件。
+// 它只暴露业务层需要的增量内容、完成和错误事件；OnComplete 携带完整答案与
+// 召回片段，便于 HTTP 层发送最终事件。
 type StreamCallback interface {
 	OnDelta(delta string)
 	OnComplete(answer string, chunks []retrieval.RetrievedChunk)
@@ -152,15 +145,14 @@ type StreamCallback interface {
 
 // StreamMessage 执行流式问答链路。
 //
-// 前置步骤（拉历史、写 user、跑 RAG）与 SendMessage 完全一致；区别只在 LLM
-// 调用走 StreamChat，并把每个 delta 通过回调实时推给 HTTP 层。完整答案在
-// 流自然结束时一次性持久化——避免每 token 一次 DB write 的写放大。
+// 拉历史、写 user 和 RAG 检索与 SendMessage 保持一致；LLM 调用改用 StreamChat，
+// 并把 delta 通过回调实时推给上层。完整答案在流结束后一次性持久化，避免每个
+// token 都写数据库。
 //
-// 失败策略与 SendMessage 一致：任何前置步骤或 LLM 失败都不写 assistant 消息，
-// 保留干净的对话历史；err 已经通过 cb.OnError 通知给 HTTP 层，函数同时返回
-// 该 err 让调用方可以记日志。
+// 失败策略与 SendMessage 一致：任何前置步骤或 LLM 失败都不写 assistant 消息。
+// 错误会通过回调通知上层，同时作为返回值交给调用方记录日志。
 //
-// trace：defer 落一条记录，与 SendMessage 同样的阶段计时口径。
+// trace 记录与 SendMessage 使用相同的阶段计时口径。
 func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb StreamCallback) error {
 	tr := newTraceBuilder(req)
 	defer func() { s.recorder.Record(tr.build()) }()
@@ -200,13 +192,13 @@ func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb Str
 	err = s.llm.StreamChat(ctx, aiclient.ChatRequest{Messages: retrieved.Messages}, bridge)
 	tr.llmMs = msSince(llmStart)
 	if err != nil {
-		// aiclient.LLMService.StreamChat 内部已调用 bridge.OnError；这里只需把
-		// 错误向上抛，不重复发 cb.OnError，避免前端收到两条 error event。
+		// StreamChat 内部已调用 bridge.OnError；这里仅返回错误，避免重复发送
+		// error 事件。
 		tr.markError(err)
 		return err
 	}
 
-	// 流自然结束：把累积答案落库 + 发 done 事件给前端。
+	// 流自然结束后，先持久化累积答案，再发送完成事件。
 	chunksJSON, _ := json.Marshal(retrieved.Chunks)
 	answer := bridge.answer.String()
 	if _, err := s.conv.AppendMessage(req.ConversationID, aiclient.RoleAssistant, answer, string(chunksJSON)); err != nil {
@@ -220,12 +212,10 @@ func (s *ChatService) StreamMessage(ctx context.Context, req SendRequest, cb Str
 	return nil
 }
 
-// streamBridge 把 aiclient.StreamCallback（底层 LLM 流式接口）适配成
-// ChatService.StreamCallback（业务层接口）。
+// streamBridge 将底层 LLM 流式回调适配为业务层流式回调。
 //
-// 同时累积 OnContent delta 到 strings.Builder，供流结束后一次性落库——避免
-// 每 token 一次 DB write 的写放大。OnComplete 故意为空，由上层 StreamMessage
-// 在确认所有副作用都成功后才发业务层 OnComplete，保证"持久化失败就不发 done"。
+// 它会累积所有 OnContent delta，供流结束后一次性落库。OnComplete 为空实现，
+// 由 StreamMessage 在持久化成功后再触发业务层完成事件。
 type streamBridge struct {
 	cb     StreamCallback
 	answer strings.Builder
@@ -236,12 +226,10 @@ func (b *streamBridge) OnContent(delta string) {
 	b.cb.OnDelta(delta)
 }
 
-// OnThinking 在 MVP 阶段忽略——业务层 StreamCallback 不暴露 thinking 流。
-// 后续如要把思维链展示给前端，再扩 StreamCallback 增加 OnThinkingDelta 即可。
+// OnThinking 当前不转发，业务层 StreamCallback 不暴露 thinking 流。
 func (b *streamBridge) OnThinking(_ string) {}
 
-// OnComplete 故意空实现：上层 StreamMessage 在持久化 assistant 消息成功后
-// 才发业务层 cb.OnComplete，保证 done 事件与 DB 落盘同步。
+// OnComplete 为空实现；StreamMessage 会在 assistant 消息持久化成功后发送完成事件。
 func (b *streamBridge) OnComplete() {}
 
 func (b *streamBridge) OnError(err error) {
@@ -250,11 +238,10 @@ func (b *streamBridge) OnError(err error) {
 
 // ──── trace 累加器 ───────────────────────────────────────
 
-// traceBuilder 是 SendMessage / StreamMessage 共用的 trace 累加器。
+// traceBuilder 是 SendMessage 和 StreamMessage 共用的 trace 累加器。
 //
-// 它在请求开始时记录起点，过程中分段填阶段耗时与结果字段，最后由 build()
-// 算出总耗时并产出 *admin.TraceRecord。设计成"逐步填充"是为了配合 defer：
-// 无论链路在哪一步失败，defer 都能拿到当前已填的部分。
+// 它在请求开始时记录起点，过程中逐步填充阶段耗时与结果字段，最后由 build
+// 计算总耗时并产出 TraceRecord。该结构便于 defer 在任意失败点记录已完成部分。
 type traceBuilder struct {
 	startTime time.Time
 	record    *admin.TraceRecord
@@ -263,8 +250,8 @@ type traceBuilder struct {
 	llmMs     int64
 }
 
-// newTraceBuilder 用请求入参初始化累加器。Success 默认 0（失败），只有显式
-// markSuccess 才置 1——这样任何中途 return 都自然记为失败。
+// newTraceBuilder 使用请求参数初始化累加器。Success 默认保持 0，只有显式
+// markSuccess 后才置为 1。
 func newTraceBuilder(req SendRequest) *traceBuilder {
 	return &traceBuilder{
 		startTime: time.Now(),
@@ -276,7 +263,7 @@ func newTraceBuilder(req SendRequest) *traceBuilder {
 	}
 }
 
-// fillFromRetrieve 把 RAG 检索结果的关键字段抄进 trace。
+// fillFromRetrieve 将 RAG 检索结果的关键字段写入 trace。
 func (b *traceBuilder) fillFromRetrieve(r *retrieval.RetrieveResult) {
 	b.record.RewrittenQuery = r.RewrittenQuery
 	if data, err := json.Marshal(r.SubQuestions); err == nil {
@@ -285,7 +272,7 @@ func (b *traceBuilder) fillFromRetrieve(r *retrieval.RetrieveResult) {
 	b.record.ChunksCount = len(r.Chunks)
 }
 
-// markError 记录失败原因；Success 保持 0。
+// markError 记录失败原因，Success 保持 0。
 func (b *traceBuilder) markError(err error) {
 	b.record.ErrorMessage = err.Error()
 }
@@ -295,7 +282,7 @@ func (b *traceBuilder) markSuccess() {
 	b.record.Success = 1
 }
 
-// build 填入阶段耗时与总耗时，产出最终 trace 记录。
+// build 填入阶段耗时与总耗时，并返回最终 trace 记录。
 func (b *traceBuilder) build() *admin.TraceRecord {
 	b.record.HistoryMs = b.historyMs
 	b.record.RagMs = b.ragMs

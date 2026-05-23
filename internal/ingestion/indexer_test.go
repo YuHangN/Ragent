@@ -45,7 +45,7 @@ func (m *stubMilvus) HasPartition(_ context.Context, coll, part string) (bool, e
 	return m.existingParts[coll][part], nil
 }
 
-func (m *stubMilvus) CreatePartition(_ context.Context, coll, part string) error {
+func (m *stubMilvus) CreatePartition(_ context.Context, coll, part string, _ ...client.CreatePartitionOption) error {
 	if m.createErr != nil {
 		return m.createErr
 	}

@@ -149,7 +149,7 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 	}
 	nodes = append(nodes,
 		NewEmbedderNode(s.embedding),
-		NewIndexerNode(s.milvus),
+		NewIndexerNode(s.milvus, IndexerParams{}),
 	)
 	pipeline := NewPipeline(nodes...)
 

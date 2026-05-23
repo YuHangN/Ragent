@@ -136,3 +136,10 @@ ingestion:
     enhancer-enabled: false   # 文档级 LLM 增强，默认关（有 LLM 调用成本）
     enricher-enabled: false   # chunk 级 LLM 增强，默认关
     concurrency: 4            # Enricher 并发 LLM 调用上限
+  chunkRouter:
+    enabled: false            # chunk 级 LLM 意图路由（标配 A），默认关
+    minScore: 0.6             # 低于该分数 chunk 回退 doc 级 partition（_default）
+    concurrency: 4            # 并发跑的 batch 数
+    batchSize: 8              # 单次 LLM 调用塞多少 chunk
+    maxRetries: 2             # LLM 失败重试次数（失败后该 batch 走 fallback）
+    autoCreatePartition: true # IndexerNode 写入前自动建缺失 partition（支撑动态意图）

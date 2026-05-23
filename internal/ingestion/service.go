@@ -9,6 +9,7 @@ import (
 	"github.com/YuHangN/ragent-go/config"
 	"github.com/YuHangN/ragent-go/internal/ingestion/fetcher"
 	"github.com/YuHangN/ragent-go/internal/ingestion/parser"
+	"github.com/YuHangN/ragent-go/internal/intent"
 	"github.com/YuHangN/ragent-go/internal/knowledge"
 	"github.com/YuHangN/ragent-go/pkg/aiclient"
 	milvusclient "github.com/milvus-io/milvus-sdk-go/v2/client"
@@ -22,6 +23,7 @@ type IngestionService struct {
 	milvus        milvusclient.Client
 	embedding     aiclient.EmbeddingService
 	llm           aiclient.LLMService
+	classifier    *intent.Classifier
 	docRepo       knowledge.DocRepo
 	chunkRepo     knowledge.ChunkRepo
 	chunker       ChunkerStrategy
@@ -30,6 +32,7 @@ type IngestionService struct {
 	chunkLog      *knowledge.ChunkLogService
 	tokens        aiclient.TokenCounter
 	enrichmentCfg config.EnrichmentConfig
+	routerCfg     config.ChunkRouterConfig
 }
 
 type IngestionServiceConfig struct {
@@ -37,6 +40,7 @@ type IngestionServiceConfig struct {
 	ChunkSize       int                      // default: 512
 	Overlap         int                      // default: 128
 	Enrichment      config.EnrichmentConfig  // 默认零值：两个 enabled 都 false → pipeline 与 Phase 9 之前一致
+	ChunkRouter     config.ChunkRouterConfig // 默认零值（Enabled=false）→ 不挂 ChunkRouterNode
 }
 
 // NewIngestionService 构造摄入服务。
@@ -44,12 +48,15 @@ type IngestionServiceConfig struct {
 // llm 可以传 nil——只要 Enrichment 的两个 enabled 标志都为 false，pipeline
 // 不会用到它。开启任一开关又没传 llm 会在 ProcessDocument 第一次跑到对应节点
 // 时崩，构造期不强校验是为了让测试可以构造一个不开 enrichment 的实例。
+//
+// classifier 同理——只要 ChunkRouter.Enabled=false 就不会被使用；测试构造可传 nil。
 func NewIngestionService(
 	parserSel *parser.DocumentParserSelector,
 	s3Fetcher *fetcher.S3Fetcher,
 	milvus milvusclient.Client,
 	embedding aiclient.EmbeddingService,
 	llm aiclient.LLMService,
+	classifier *intent.Classifier,
 	docRepo knowledge.DocRepo,
 	chunkRepo knowledge.ChunkRepo,
 	cfg IngestionServiceConfig,
@@ -72,6 +79,7 @@ func NewIngestionService(
 		milvus:        milvus,
 		embedding:     embedding,
 		llm:           llm,
+		classifier:    classifier,
 		docRepo:       docRepo,
 		chunkRepo:     chunkRepo,
 		chunker:       cfg.ChunkerStrategy,
@@ -80,6 +88,7 @@ func NewIngestionService(
 		chunkLog:      chunkLog,
 		tokens:        tokens,
 		enrichmentCfg: cfg.Enrichment,
+		routerCfg:     cfg.ChunkRouter,
 	}
 }
 
@@ -134,8 +143,8 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 		Status: "running",
 	}
 
-	// 4. 构造并运行管道：fetcher → parser → [enhancer] → chunker → [enricher] → embedder → indexer
-	// Enhancer / Enricher 由 enrichment 配置控制；都关掉时管道形状与 Phase 9 之前一致。
+	// 4. 构造并运行管道：fetcher → parser → [enhancer] → chunker → [enricher] → [chunk_router] → embedder → indexer
+	// Enhancer / Enricher 由 enrichment 配置控制；ChunkRouter 由 routerCfg 控制；都关掉时管道形状与 Phase 9 之前一致。
 	nodes := []Node{
 		NewFetcherNode(s.s3Fetcher),
 		NewParserNode(s.parserSel),
@@ -147,9 +156,22 @@ func (s *IngestionService) processDocumentImpl(ctx context.Context, docID int64)
 	if s.enrichmentCfg.EnricherEnabled {
 		nodes = append(nodes, NewEnricherNode(s.llm, s.enrichmentCfg.EnricherConcurrency()))
 	}
+	if s.routerCfg.Enabled && s.classifier != nil {
+		nodes = append(nodes, NewChunkRouterNode(
+			s.classifier,
+			doc.KbID,
+			ic.PartitionName,
+			ChunkRouterParams{
+				MinScore:    s.routerCfg.MinScore,
+				Concurrency: s.routerCfg.RouterConcurrency(),
+				BatchSize:   s.routerCfg.RouterBatchSize(),
+				MaxRetries:  s.routerCfg.RouterMaxRetries(),
+			},
+		))
+	}
 	nodes = append(nodes,
 		NewEmbedderNode(s.embedding),
-		NewIndexerNode(s.milvus, IndexerParams{}),
+		NewIndexerNode(s.milvus, IndexerParams{AutoCreatePartition: s.routerCfg.AutoCreatePartition}),
 	)
 	pipeline := NewPipeline(nodes...)
 

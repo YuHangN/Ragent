@@ -109,13 +109,18 @@ func main() {
 
 	s3Fetcher := fetcher.NewS3Fetcher(s3Client)
 
-	// 9. Ingestion pipeline（Phase 5；Phase 9 加入 LLM enrichment）
+	// 8.5 intent classifier 提前构造：ingestion 的 ChunkRouterNode 和后续 RAG 链路复用同一实例。
+	intentRepo := intent.NewRepo(gormDB)
+	classifier := intent.NewClassifier(llmService, intentRepo)
+
+	// 9. Ingestion pipeline（Phase 5；Phase 9 加入 LLM enrichment；Phase 10 加入 chunk router）
 	ingestionSvc := ingestion.NewIngestionService(
 		parserSel,
 		s3Fetcher,
 		milvusClient,
 		embeddingService,
 		llmService,
+		classifier,
 		docRepo,
 		chunkRepo,
 		ingestion.IngestionServiceConfig{
@@ -123,6 +128,7 @@ func main() {
 			ChunkSize:       512,
 			Overlap:         128,
 			Enrichment:      cfg.Ingestion.Enrichment,
+			ChunkRouter:     cfg.Ingestion.ChunkRouter,
 		},
 		chunkLogSvc,
 		tokenCounter,
@@ -138,11 +144,10 @@ func main() {
 
 	// 10.5 RAG Core 服务：把 Phase 6 全套组件串成统一入口供 Phase 7 chat 调用。
 	// 整个链路：QueryRewrite → intent.Resolver → MultiChannelEngine → Prompt。
-	intentRepo := intent.NewRepo(gormDB)
+	// intentRepo / classifier 已在 8.5 提前构造（与 ChunkRouterNode 复用同一实例）。
 	retriever := retrieval.NewMilvusRetriever(milvusClient, embeddingService)
 
 	rewriteSvc := retrieval.NewQueryRewriteService(llmService, cfg.RAG.QueryRewrite)
-	classifier := intent.NewClassifier(llmService, intentRepo)
 	intentResolver := intent.NewResolver(
 		classifier,
 		3, // 单子问题最多保留 3 个意图候选

@@ -38,6 +38,12 @@ func NewRouter(basePath string, deps Deps) *gin.Engine {
 	r.Use(middleware.ErrorHandler())
 	r.Use(middleware.DemoMode(deps.DemoMode))
 
+	// 静态前端：MVP web/ 目录，/ → /ui/login.html
+	r.Static("/ui", "./web")
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/ui/login.html")
+	})
+
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound,
 			response.Fail[any](errorcode.ClientError.Code(), "接口不存在: "+c.Request.URL.Path))

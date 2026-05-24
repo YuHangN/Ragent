@@ -1,0 +1,184 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f1115;
+  --panel: #1a1d24;
+  --panel-2: #21252e;
+  --border: #2d3340;
+  --text: #e6e8eb;
+  --muted: #8a909c;
+  --accent: #4f8cff;
+  --accent-hover: #6b9eff;
+  --danger: #ff5757;
+  --ok: #3fb950;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand { font-weight: 600; }
+.topbar nav a { margin-right: 16px; }
+.topbar .user { color: var(--muted); font-size: 14px; }
+.topbar .user button { margin-left: 12px; }
+
+.container {
+  max-width: 1100px;
+  margin: 24px auto;
+  padding: 0 24px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+h1 { font-size: 22px; margin-bottom: 16px; }
+h2 { font-size: 16px; margin-bottom: 12px; color: var(--muted); font-weight: 500; }
+
+input, select, textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+button {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+}
+button:hover { background: var(--accent-hover); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+button.ghost:hover { border-color: var(--accent); }
+
+.row { display: flex; gap: 12px; align-items: center; }
+.row > * { flex: 1; }
+.row > .shrink { flex: 0 0 auto; }
+
+.muted { color: var(--muted); font-size: 13px; }
+.error { color: var(--danger); margin-top: 8px; font-size: 13px; min-height: 18px; }
+.ok { color: var(--ok); }
+
+/* 登录页 */
+.login-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.login-card { width: 360px; }
+.login-card h1 { text-align: center; }
+.login-card .row { margin-bottom: 12px; }
+
+/* 表格 */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th { color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: none; }
+
+/* 聊天 */
+.chat-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+  height: calc(100vh - 110px);
+}
+.chat-sidebar { overflow-y: auto; }
+.chat-main { display: flex; flex-direction: column; }
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.msg { margin-bottom: 16px; }
+.msg .role {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.msg.user .bubble {
+  background: var(--accent);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 12px;
+  display: inline-block;
+  max-width: 80%;
+}
+.msg.assistant .bubble {
+  background: var(--panel-2);
+  padding: 10px 14px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+}
+.msg .chunks {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.msg .chunk {
+  background: var(--panel-2);
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-top: 4px;
+  border-left: 2px solid var(--accent);
+}
+.chat-input { display: flex; gap: 8px; }
+.chat-input textarea {
+  flex: 1;
+  height: 70px;
+  resize: none;
+}
+.session-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+}
+.session-item:hover { background: var(--panel-2); }
+.session-item.active {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}

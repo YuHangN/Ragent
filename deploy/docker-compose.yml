@@ -27,6 +27,92 @@ services:
       - "9998:9998"
     restart: unless-stopped
 
+  # ── Milvus 依赖 ──────────────────────────────────────
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: ragent-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - ragent-etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 对象存储：同时给 Milvus（bucket=milvus）和 ragent app（bucket=ragent）用 ──
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: ragent-minio
+    environment:
+      MINIO_ROOT_USER: ${RAGENT_RUSTFS_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${RAGENT_RUSTFS_SECRET_KEY}
+    ports:
+      - "9000:9000"      # S3 API（ragent app 用）
+      - "9001:9001"      # Web Console
+    command: server /data --console-address ":9001"
+    volumes:
+      - ragent-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 一次性初始化两个 bucket：ragent / milvus
+  minio-init:
+    image: minio/mc:RELEASE.2024-08-17T11-33-50Z
+    container_name: ragent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file: ../.env
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$RAGENT_RUSTFS_ACCESS_KEY $$RAGENT_RUSTFS_SECRET_KEY &&
+      mc mb -p local/ragent || true &&
+      mc mb -p local/milvus || true &&
+      echo 'buckets ready' && exit 0
+      "
+
+  # ── Milvus standalone ─────────────────────────────────
+  milvus:
+    image: milvusdb/milvus:v2.4.13
+    container_name: ragent-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${RAGENT_RUSTFS_ACCESS_KEY}
+      MINIO_SECRET_ACCESS_KEY: ${RAGENT_RUSTFS_SECRET_KEY}
+      MINIO_BUCKET_NAME: milvus
+    ports:
+      - "19530:19530"    # gRPC
+      - "9091:9091"      # metrics
+    volumes:
+      - ragent-milvus-data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+
 volumes:
   ragent-mysql-data:
   ragent-redis-data:
+  ragent-etcd-data:
+  ragent-minio-data:
+  ragent-milvus-data:

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ragent · 登录</title>
+  <link rel="stylesheet" href="/ui/css/style.css" />
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <h1>Ragent</h1>
+      <div class="row"><input id="username" placeholder="用户名" autocomplete="username" /></div>
+      <div class="row"><input id="password" type="password" placeholder="密码" autocomplete="current-password" /></div>
+      <div class="row"><button id="loginBtn" style="width:100%">登录</button></div>
+      <div class="error" id="err"></div>
+      <div class="muted" style="margin-top:8px;text-align:center">登录后跳转到主页</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { apiPost, setToken, setUser, getToken } from "/ui/js/api.js";
+
+    if (getToken()) location.href = "/ui/index.html";
+
+    const $ = (id) => document.getElementById(id);
+    const err = $("err");
+    const btn = $("loginBtn");
+
+    async function doLogin() {
+      err.textContent = "";
+      const username = $("username").value.trim();
+      const password = $("password").value;
+      if (!username || !password) {
+        err.textContent = "请输入用户名和密码";
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const data = await apiPost("/auth/login", { username, password });
+        setToken(data.token);
+        setUser({ userId: data.userId, role: data.role, avatar: data.avatar, username });
+        location.href = "/ui/index.html";
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener("click", doLogin);
+    document.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+  </script>
+</body>
+</html>

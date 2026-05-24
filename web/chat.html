@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ragent · 聊天</title>
+  <link rel="stylesheet" href="/ui/css/style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Ragent</div>
+    <nav>
+      <a href="/ui/index.html">主页</a>
+      <a href="/ui/chat.html">聊天</a>
+    </nav>
+    <div class="user">
+      <span id="userBadge"></span>
+      <button class="ghost" id="logoutBtn">登出</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="chat-layout">
+      <div class="card chat-sidebar">
+        <div class="row" style="margin-bottom:8px">
+          <button id="newSessionBtn" style="width:100%">+ 新会话</button>
+        </div>
+        <div id="sessionList"></div>
+      </div>
+
+      <div class="chat-main">
+        <div class="card" style="margin-bottom:12px;padding:12px">
+          <div class="row">
+            <label class="muted shrink" style="flex:0 0 80px">知识库</label>
+            <select id="kbSelect"><option value="">全部</option></select>
+            <label class="muted shrink" style="flex:0 0 40px">topK</label>
+            <input id="topK" type="number" value="5" min="1" max="20" class="shrink" style="flex:0 0 80px" />
+          </div>
+        </div>
+
+        <div class="chat-messages" id="messages">
+          <div class="muted" style="text-align:center;padding:40px 0">选择左侧会话或新建一个，开始提问</div>
+        </div>
+
+        <div class="chat-input">
+          <textarea id="question" placeholder="输入问题，Enter 发送 / Shift+Enter 换行"></textarea>
+          <button id="sendBtn" class="shrink">发送</button>
+        </div>
+        <div class="error" id="chatErr"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { apiGet, apiPost, apiDelete, chatStream, requireAuth, getUser, clearAuth } from "/ui/js/api.js";
+
+    requireAuth();
+
+    const $ = (id) => document.getElementById(id);
+    const u = getUser();
+    if (u) $("userBadge").textContent = `${u.username || u.userId} (${u.role || "user"})`;
+    $("logoutBtn").addEventListener("click", () => { clearAuth(); location.href = "/ui/login.html"; });
+
+    let sessions = [];
+    let currentSessionID = "";
+    let kbList = [];
+
+    async function loadKBs() {
+      try {
+        const data = await apiGet("/knowledge-base", { current: 1, size: 100 });
+        kbList = data.records || [];
+        const sel = $("kbSelect");
+        sel.innerHTML = '<option value="">全部知识库</option>' +
+          kbList.map((kb) => `<option value="${kb.id}">${escape(kb.name)}</option>`).join("");
+        const saved = localStorage.getItem("ragent_kb_id");
+        if (saved && kbList.find((kb) => kb.id === saved)) sel.value = saved;
+      } catch (e) {
+        $("chatErr").textContent = "加载知识库失败：" + e.message;
+      }
+    }
+
+    async function loadSessions() {
+      try {
+        const data = await apiGet("/conversations", { limit: 50, offset: 0 });
+        sessions = data.list || [];
+        renderSessions();
+      } catch (e) {
+        $("chatErr").textContent = "加载会话失败：" + e.message;
+      }
+    }
+
+    function renderSessions() {
+      const list = $("sessionList");
+      if (sessions.length === 0) {
+        list.innerHTML = '<div class="muted" style="padding:12px 4px">还没有会话</div>';
+        return;
+      }
+      list.innerHTML = sessions.map((s) => `
+        <div class="session-item ${s.id === currentSessionID ? "active" : ""}" data-id="${s.id}">
+          ${escape(s.title || "新会话")}
+        </div>
+      `).join("");
+      list.querySelectorAll(".session-item").forEach((el) => {
+        el.addEventListener("click", () => selectSession(el.dataset.id));
+      });
+    }
+
+    async function selectSession(id) {
+      currentSessionID = id;
+      renderSessions();
+      try {
+        const data = await apiGet("/conversations/" + id);
+        renderMessages(data.messages || []);
+      } catch (e) {
+        $("chatErr").textContent = e.message;
+      }
+    }
+
+    function renderMessages(msgs) {
+      const box = $("messages");
+      if (msgs.length === 0) {
+        box.innerHTML = '<div class="muted" style="text-align:center;padding:40px 0">还没有消息，开始提问吧</div>';
+        return;
+      }
+      box.innerHTML = "";
+      for (const m of msgs) addMessage(m.role, m.content, m.chunksJson);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function addMessage(role, content, chunksJson) {
+      const box = $("messages");
+      if (box.querySelector(".muted")) box.innerHTML = "";
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.innerHTML = `
+        <div class="role">${role === "user" ? "我" : "助手"}</div>
+        <div class="bubble"></div>
+        <div class="chunks"></div>
+      `;
+      div.querySelector(".bubble").textContent = content;
+      if (chunksJson) {
+        try {
+          const chunks = JSON.parse(chunksJson);
+          if (Array.isArray(chunks) && chunks.length > 0) {
+            div.querySelector(".chunks").innerHTML =
+              `引用 ${chunks.length} 条：` +
+              chunks.slice(0, 3).map((c) => `<div class="chunk">${escape((c.content || "").slice(0, 200))}</div>`).join("");
+          }
+        } catch {}
+      }
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      return div;
+    }
+
+    async function newSession() {
+      const sel = $("kbSelect").value;
+      const kbIds = sel ? [sel] : [];
+      try {
+        const data = await apiPost("/conversations", { kbIds, title: "" });
+        await loadSessions();
+        await selectSession(data.id);
+      } catch (e) {
+        $("chatErr").textContent = e.message;
+      }
+    }
+    $("newSessionBtn").addEventListener("click", newSession);
+
+    async function send() {
+      $("chatErr").textContent = "";
+      const q = $("question").value.trim();
+      if (!q) return;
+      if (!currentSessionID) {
+        await newSession();
+        if (!currentSessionID) return;
+      }
+      const kbSel = $("kbSelect").value;
+      const topK = parseInt($("topK").value) || 5;
+      const kbIds = kbSel ? [kbSel] : [];
+
+      addMessage("user", q);
+      $("question").value = "";
+      $("sendBtn").disabled = true;
+
+      const assistantEl = addMessage("assistant", "");
+      const bubble = assistantEl.querySelector(".bubble");
+      const chunksEl = assistantEl.querySelector(".chunks");
+      let buf = "";
+
+      try {
+        await chatStream(
+          { conversationId: currentSessionID, question: q, kbIds, topK },
+          {
+            onChunk: (delta) => {
+              buf += delta;
+              bubble.textContent = buf;
+              $("messages").scrollTop = $("messages").scrollHeight;
+            },
+            onDone: (data) => {
+              bubble.textContent = data.answer || buf;
+              if (data.chunks && data.chunks.length > 0) {
+                chunksEl.innerHTML =
+                  `引用 ${data.chunks.length} 条：` +
+                  data.chunks.slice(0, 3).map((c) => `<div class="chunk">${escape((c.content || "").slice(0, 200))}</div>`).join("");
+              }
+            },
+            onError: (msg) => {
+              $("chatErr").textContent = msg;
+              if (!buf) bubble.textContent = "[错误] " + msg;
+            },
+          }
+        );
+      } finally {
+        $("sendBtn").disabled = false;
+        loadSessions(); // 刷新标题（自动填）
+      }
+    }
+    $("sendBtn").addEventListener("click", send);
+    $("question").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    function escape(s) {
+      return String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+    }
+
+    Promise.all([loadKBs(), loadSessions()]);
+  </script>
+</body>
+</html>
